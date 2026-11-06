@@ -11,7 +11,7 @@ export interface AppLink {
 }
 
 export function computeAppHref(appPath: string, fallbackHref: string): AppLink {
-  const parts = location.hostname.split('.')[0].split('--'); // e.g. "main--da-tools--maxn-adobe"
+  const parts = location.hostname.split('.')[0].split('--'); // e.g. "main--da-tools--adobecom"
   if (parts.length !== 3) return { href: fallbackHref }; // not embedded → keep the relative link
   const [ref, repo, org] = parts;
   const suffix = ref === 'main' ? '' : `?ref=${encodeURIComponent(ref)}`;

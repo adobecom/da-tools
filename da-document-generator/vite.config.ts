@@ -7,7 +7,7 @@ import react from '@vitejs/plugin-react'
 // da-document-generator/dist/ and is served by AEM Edge Delivery at that subfolder path.
 //
 // Built entry:  da-document-generator/dist/index.html  ->  /da-document-generator/dist/index.html
-// da.live app:  https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index
+// da.live app:  https://da.live/app/adobecom/da-tools/da-document-generator/dist/index
 export default defineConfig(({ command }) => {
   const base = command === 'serve' ? '/' : '/da-document-generator/dist/'
 

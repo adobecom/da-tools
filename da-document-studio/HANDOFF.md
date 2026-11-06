@@ -15,7 +15,7 @@ tool is, why it exists, its current state, and the concrete next steps. **Read t
 A combined DA (Document Authoring) **"Document Studio"** that puts a document **Generator** and a
 document **Manager** behind one two-tab shell, served at:
 
-> https://da.live/app/maxn-adobe/da-tools/da-document-studio/dist/index
+> https://da.live/app/adobecom/da-tools/da-document-studio/dist/index
 
 From `vite.config.ts`: *"a combined DA document generator + document manager behind a two-tab shell."*
 

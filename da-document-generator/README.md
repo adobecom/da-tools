@@ -2,7 +2,7 @@
 
 A generic DA tool: fill a template document's `{{placeholder}}` tokens from a spreadsheet (CSV/XLSX) or JSON file and write the resulting documents to DA. A more general sibling of the [pdp-document-generator](../pdp-document-generator/), with the product-specific logic stripped out.
 
-Opens in DA at: **https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index**
+Opens in DA at: **https://da.live/app/adobecom/da-tools/da-document-generator/dist/index**
 
 ## What it does
 

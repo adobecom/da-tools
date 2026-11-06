@@ -2,4 +2,4 @@
 # serves the built /dist tool from the code bus. The mountpoint target is not
 # fetched (the tool is static) — it only needs to be present and valid.
 mountpoints:
-  /: https://content.da.live/maxn-adobe/da-tools/
+  /: https://content.da.live/adobecom/da-tools/

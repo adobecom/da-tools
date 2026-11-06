@@ -5,7 +5,7 @@ exist, how many pages use each, and exactly which pages. Cloned from **Block Ind
 same repo picker, crawl, per-directory caching, and token handshake, but scans one level deeper
 (capturing each block's variants) and presents the results as a two-pane workspace.
 
-Opens in DA at: **https://da.live/app/maxn-adobe/da-tools/block-manager/dist/index**
+Opens in DA at: **https://da.live/app/adobecom/da-tools/block-manager/dist/index**
 
 ## What it does
 

@@ -5,7 +5,7 @@ repo by name — the tool infers the da.live content, GitHub repo, and aem.live 
 auto-detects the repo's blocks path. Results (per-directory block usage) are cached as `audit-*.json`
 in a shared da.live drafts folder, and the list of repos lives in a shared `repos.json` there too.
 
-Opens in DA at: **https://da.live/app/maxn-adobe/da-tools/block-index/dist/index**
+Opens in DA at: **https://da.live/app/adobecom/da-tools/block-index/dist/index**
 
 ## What it does
 

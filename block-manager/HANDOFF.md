@@ -12,7 +12,7 @@ and ship it, known constraints, and the roadmap. Read this first.
 is a Vite + React + TypeScript SPA, built to `dist/` and served through AEM Edge Delivery, embedded in
 da.live at:
 
-> https://da.live/app/maxn-adobe/da-tools/block-manager/dist/index
+> https://da.live/app/adobecom/da-tools/block-manager/dist/index
 
 It was **cloned from the `block-index` tool** and extended. `block-index` remains a separate,
 untouched tool; the two never share data.
