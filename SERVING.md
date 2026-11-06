@@ -8,16 +8,16 @@ The repo root serves a landing page; each tool is served at its own subfolder pa
 
 | Tool | In da.live (primary) | Direct (delivery) |
 |---|---|---|
-| DA Tools home | https://da.live/app/maxn-adobe/da-tools/index | https://main--da-tools--maxn-adobe.aem.live/index.html |
-| `pdp-document-generator` | https://da.live/app/maxn-adobe/da-tools/pdp-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/pdp-document-generator/dist/index.html |
-| `da-document-generator` | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/da-document-generator/dist/index.html |
-| `block-signature-migrator` | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index | https://main--da-tools--maxn-adobe.aem.live/block-signature-migrator/dist/index.html |
-| `block-finder` (static) | https://da.live/app/maxn-adobe/da-tools/block-finder/index | https://main--da-tools--maxn-adobe.aem.live/block-finder/index.html |
-| `document-counter` (static) | https://da.live/app/maxn-adobe/da-tools/document-counter/index | https://main--da-tools--maxn-adobe.aem.live/document-counter/index.html |
-| `block-index` | https://da.live/app/maxn-adobe/da-tools/block-index/dist/index | https://main--da-tools--maxn-adobe.aem.live/block-index/dist/index.html |
-| `github-package-comparator` (static) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index | https://main--da-tools--maxn-adobe.aem.live/github-package-comparator/index.html |
+| DA Tools home | https://da.live/app/adobecom/da-tools/index | https://main--da-tools--adobecom.aem.live/index.html |
+| `pdp-document-generator` | https://da.live/app/adobecom/da-tools/pdp-document-generator/dist/index | https://main--da-tools--adobecom.aem.live/pdp-document-generator/dist/index.html |
+| `da-document-generator` | https://da.live/app/adobecom/da-tools/da-document-generator/dist/index | https://main--da-tools--adobecom.aem.live/da-document-generator/dist/index.html |
+| `block-signature-migrator` | https://da.live/app/adobecom/da-tools/block-signature-migrator/dist/index | https://main--da-tools--adobecom.aem.live/block-signature-migrator/dist/index.html |
+| `block-finder` (static) | https://da.live/app/adobecom/da-tools/block-finder/index | https://main--da-tools--adobecom.aem.live/block-finder/index.html |
+| `document-counter` (static) | https://da.live/app/adobecom/da-tools/document-counter/index | https://main--da-tools--adobecom.aem.live/document-counter/index.html |
+| `block-index` | https://da.live/app/adobecom/da-tools/block-index/dist/index | https://main--da-tools--adobecom.aem.live/block-index/dist/index.html |
+| `github-package-comparator` (static) | https://da.live/app/adobecom/da-tools/github-package-comparator/index | https://main--da-tools--adobecom.aem.live/github-package-comparator/index.html |
 
-Append `?ref=<branch>` to the da.live URL (or use `<branch>--da-tools--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
+Append `?ref=<branch>` to the da.live URL (or use `<branch>--da-tools--adobecom.aem.live` for the direct URL) to view a non-`main` branch.
 
 ## How it works (the parts that matter)
 
@@ -56,17 +56,17 @@ The site is registered once for the **whole repo**; individual tools need no ext
 1. Add `fstab.yaml` at the repo root, on the default branch (`main`).
 2. Register the EDS site **once** via the Admin API:
    ```
-   PUT https://admin.hlx.page/config/maxn-adobe/sites/da-tools.json
+   PUT https://admin.hlx.page/config/adobecom/sites/da-tools.json
    x-auth-token: <token from an admin.hlx.page/auth/adobe login>
-   {"code":{"owner":"maxn-adobe","repo":"da-tools"},
-    "content":{"source":{"url":"https://content.da.live/maxn-adobe/da-tools/","type":"markup"}}}
+   {"code":{"owner":"adobecom","repo":"da-tools"},
+    "content":{"source":{"url":"https://content.da.live/adobecom/da-tools/","type":"markup"}}}
    ```
 3. Install **AEM Code Sync** on the repo. If it isn't syncing (no commit activity; delivery returns `code-bus: 404`), **remove + re-add** the repo in the app's settings to force the initial sync.
 
 ## Troubleshooting (read the `x-error` response header)
 
 ```bash
-curl -sS -D - -o /dev/null "https://main--da-tools--maxn-adobe.aem.live/da-document-generator/dist/index.html" | grep -i "x-error\|HTTP/"
+curl -sS -D - -o /dev/null "https://main--da-tools--adobecom.aem.live/da-document-generator/dist/index.html" | grep -i "x-error\|HTTP/"
 ```
 
 | `x-error` | Meaning | Fix |

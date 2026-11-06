@@ -4,18 +4,18 @@ A container repository that hosts **multiple standalone DA (Document Authoring) 
 
 ## Tools
 
-Open the **[DA Tools home](https://da.live/app/maxn-adobe/da-tools/index)** page for cards linking to every tool, or go straight to one:
+Open the **[DA Tools home](https://da.live/app/adobecom/da-tools/index)** page for cards linking to every tool, or go straight to one:
 
 | Tool | Folder | Opens in DA at |
 |---|---|---|
-| **PDP Document Generator** — bulk-generate DA pages from product data + templates | [`pdp-document-generator/`](./pdp-document-generator/) | https://da.live/app/maxn-adobe/da-tools/pdp-document-generator/dist/index |
-| **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index |
-| **Block Finder** — find every `/express` page that uses a given block | [`block-finder/`](./block-finder/) | https://da.live/app/maxn-adobe/da-tools/block-finder/index |
-| **Document Counter** — count HTML documents under any directory path | [`document-counter/`](./document-counter/) | https://da.live/app/maxn-adobe/da-tools/document-counter/index |
-| **Block Index** — pick a known repo, or add any `adobecom` DA repo by name, and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/dist/index |
-| **Block Manager** — drill into any block and see its variant breakdown: which variants exist, how many pages use each, and where | [`block-manager/`](./block-manager/) | https://da.live/app/maxn-adobe/da-tools/block-manager/dist/index |
-| **Block Signature Migrator** — inspect block structure, infer block schemas, audit signature drift | [`block-signature-migrator/`](./block-signature-migrator/) | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index |
-| **GitHub Package Comparator** — compare a JSON file (e.g. `package.json`) across GitHub repos | [`github-package-comparator/`](./github-package-comparator/) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index |
+| **PDP Document Generator** — bulk-generate DA pages from product data + templates | [`pdp-document-generator/`](./pdp-document-generator/) | https://da.live/app/adobecom/da-tools/pdp-document-generator/dist/index |
+| **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/adobecom/da-tools/da-document-generator/dist/index |
+| **Block Finder** — find every `/express` page that uses a given block | [`block-finder/`](./block-finder/) | https://da.live/app/adobecom/da-tools/block-finder/index |
+| **Document Counter** — count HTML documents under any directory path | [`document-counter/`](./document-counter/) | https://da.live/app/adobecom/da-tools/document-counter/index |
+| **Block Index** — pick a known repo, or add any `adobecom` DA repo by name, and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/adobecom/da-tools/block-index/dist/index |
+| **Block Manager** — drill into any block and see its variant breakdown: which variants exist, how many pages use each, and where | [`block-manager/`](./block-manager/) | https://da.live/app/adobecom/da-tools/block-manager/dist/index |
+| **Block Signature Migrator** — inspect block structure, infer block schemas, audit signature drift | [`block-signature-migrator/`](./block-signature-migrator/) | https://da.live/app/adobecom/da-tools/block-signature-migrator/dist/index |
+| **GitHub Package Comparator** — compare a JSON file (e.g. `package.json`) across GitHub repos | [`github-package-comparator/`](./github-package-comparator/) | https://da.live/app/adobecom/da-tools/github-package-comparator/index |
 
 Block Finder, Document Counter, and GitHub Package Comparator are static (no-build) tools served at `<tool>/index`; the others are built Vite apps served at `<tool>/dist/index`. Append `?ref=<branch>` to preview a non-`main` branch, e.g. `…/da-document-generator/dist/index?ref=my-branch`.
 
@@ -82,7 +82,7 @@ Then open e.g. `http://localhost:8777/block-finder/index.html`. This is fine for
    const base = command === 'serve' ? '/' : '/my-tool/dist/'
    ```
 3. `npm install && npm run build` inside the folder, commit `my-tool/` (including `dist/`), and push.
-4. It's live at `https://da.live/app/maxn-adobe/da-tools/my-tool/dist/index`.
+4. It's live at `https://da.live/app/adobecom/da-tools/my-tool/dist/index`.
 
 Then add a card for it to the root [`index.html`](./index.html) so it appears on the DA Tools home page. A tool that needs no framework can instead be a **static, no-build** folder (like `block-finder/`) — a plain `index.html` + ES modules served directly at `<tool>/index`, with no `dist/` and no `base` to set; see [SERVING.md](./SERVING.md).
 

@@ -7,7 +7,7 @@ import react from '@vitejs/plugin-react'
 // subfolder path.
 //
 // Built entry:  block-index/dist/index.html  ->  /block-index/dist/index.html
-// da.live app:  https://da.live/app/maxn-adobe/da-tools/block-index/dist/index
+// da.live app:  https://da.live/app/adobecom/da-tools/block-index/dist/index
 export default defineConfig(({ command }) => {
   const base = command === 'serve' ? '/' : '/block-index/dist/'
 

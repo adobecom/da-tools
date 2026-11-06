@@ -7,7 +7,7 @@ Manager** tab of [pdp-document-generator](../pdp-document-generator/).
 > **Status: scaffold.** This is currently a Vite + React "hello world" that renders and performs the DA
 > auth-token handshake. The document-management features are not built yet.
 
-Opens in DA at: **https://da.live/app/maxn-adobe/da-tools/da-document-manager/dist/index**
+Opens in DA at: **https://da.live/app/adobecom/da-tools/da-document-manager/dist/index**
 
 ## Stack
 
