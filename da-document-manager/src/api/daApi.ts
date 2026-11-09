@@ -116,63 +116,6 @@ export async function cat(filePath: string): Promise<string> {
   return resp.text();
 }
 
-export async function writeSource(filePath: string, html: string): Promise<void> {
-  const t = getToken();
-  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
-  const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
-  const body = new FormData();
-  body.append('data', new Blob([html], { type: 'text/html' }));
-  const resp = await fetchWithRetry(`${DA_API}/source${path}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${t}` },
-    body,
-  });
-  if (!resp.ok) throw new Error(`write ${resp.status}`);
-}
-
-interface VersionEntry { label?: string; url?: string; timestamp?: number }
-
-/** URL of the most recent DA version with this label (e.g. `/versionsource/org/repo/<id>/<vid>.html`), or null. */
-export async function findVersionUrl(filePath: string, label: string): Promise<string | null> {
-  const t = getToken();
-  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
-  const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
-  const resp = await fetchWithRetry(`${DA_API}/versionlist${path}`, {
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${t}` },
-  });
-  if (!resp.ok) throw new Error(`version list ${resp.status}`);
-  const list = await resp.json() as VersionEntry[];
-  const match = list
-    .filter((v) => v.label === label && v.url)
-    .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))[0];
-  return match?.url ?? null;
-}
-
-/** Content of a version, given the `url` from the version list. */
-export async function readVersion(url: string): Promise<string> {
-  const t = getToken();
-  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
-  const resp = await fetchWithRetry(`${DA_API}${url}`, {
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${t}` },
-  });
-  if (!resp.ok) throw new Error(`version read ${resp.status}`);
-  return resp.text();
-}
-
-export async function createVersion(filePath: string, label: string): Promise<void> {
-  const t = getToken();
-  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
-  const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
-  const resp = await fetchWithRetry(`${DA_API}/versionsource${path}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label }),
-  });
-  if (!resp.ok) throw new Error(`version ${resp.status}`);
-}
-
 export async function triggerPreview(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
   const resp = await fetchWithRetry(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {

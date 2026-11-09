@@ -16,15 +16,7 @@ import { runBatch } from '../lib/concurrency';
 import type { RowResult, RowStage } from '../types';
 
 /** Which bulk operation is reporting progress (drives an n/m counter in the view). */
-export type BulkProgressOp = 'previewing' | 'publishing' | 'unpublishing' | 'deleting' | 'updating-copy' | 'rolling-back';
-
-/** Per-path result of a bulk action, for logging. `failed` maps path → reason. */
-export interface BulkActionResult {
-  succeeded: number;
-  failed: Map<string, string>;
-  /** Set when the bulk job failed as a whole and rows were retried one by one (see each row's state). */
-  fallbackReason?: string;
-}
+export type BulkProgressOp = 'previewing' | 'publishing' | 'unpublishing';
 
 export interface DaDocumentActionsOptions<T extends RowResult> {
   /**
@@ -41,10 +33,10 @@ export interface DaDocumentActions<T extends RowResult> {
   publishRow: (row: T) => Promise<void>;
   unpublishRow: (row: T) => Promise<void>;
   deleteRow: (row: T) => Promise<void>;
-  previewBulk: (rows: T[]) => Promise<BulkActionResult>;
-  publishBulk: (rows: T[]) => Promise<BulkActionResult>;
-  unpublishBulk: (rows: T[]) => Promise<BulkActionResult>;
-  deleteBulk: (rows: T[]) => Promise<BulkActionResult>;
+  previewBulk: (rows: T[]) => Promise<void>;
+  publishBulk: (rows: T[]) => Promise<void>;
+  unpublishBulk: (rows: T[]) => Promise<void>;
+  deleteBulk: (rows: T[]) => Promise<void>;
 }
 
 export function useDaDocumentActions<T extends RowResult>(
@@ -99,9 +91,9 @@ export function useDaDocumentActions<T extends RowResult>(
     }
   }
 
-  async function deleteOne(row: T): Promise<string | undefined> {
+  async function deleteOne(row: T) {
     const token = getToken();
-    if (!token) return 'DA token not set';
+    if (!token) return;
     patch(row.id, { stage: 'deleting' } as Partial<T>);
     try {
       await deleteDocument(row.path, token);
@@ -111,11 +103,9 @@ export function useDaDocumentActions<T extends RowResult>(
           ? prev.map((r) => (r.id === row.id ? replacement : r))
           : prev.filter((r) => r.id !== row.id),
       );
-      return undefined;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       patch(row.id, { stage: 'error', error: msg } as Partial<T>);
-      return msg;
     }
   }
 
@@ -129,54 +119,46 @@ export function useDaDocumentActions<T extends RowResult>(
     bulkFn: (paths: string[], token: string, onProgress?: (done: number, total: number) => void) => Promise<BulkMutateOutcome>,
     onSuccess: (row: T) => Partial<T>,
     perRowFallback: (row: T) => Promise<void>,
-  ): Promise<BulkActionResult> {
+  ): Promise<BulkMutateOutcome | undefined> {
     const token = getToken();
-    if (!token || rows.length === 0) {
-      return { succeeded: 0, failed: new Map(rows.map((r) => [r.path, 'DA token not set'])) };
-    }
+    if (!token || rows.length === 0) return undefined;
     const ids = new Set(rows.map((r) => r.id));
     patchMany(ids, { stage: inFlight, error: undefined } as Partial<T>);
     const paths = [...new Set(rows.map((r) => r.path))];
     try {
-      const outcome: BulkMutateOutcome = await bulkFn(paths, token, (done, total) => options.onBulkProgress?.(op, done, total));
+      const outcome = await bulkFn(paths, token, (done, total) => options.onBulkProgress?.(op, done, total));
       setResults((prev) => prev.map((r) => {
         if (!ids.has(r.id)) return r;
         if (outcome.succeeded.has(r.path)) return { ...r, ...onSuccess(r) };
         const reason = outcome.failed.get(r.path);
         return reason ? ({ ...r, stage: 'error', error: reason } as T) : r;
       }));
-      return { succeeded: outcome.succeeded.size, failed: new Map(outcome.failed) };
-    } catch (err) {
+      return outcome;
+    } catch {
       // Whole-op failure (token lost, unexpected throw) → per-row fan-out (full per-row UI).
-      const reason = err instanceof Error ? err.message : String(err);
-      let done = 0;
-      await runBatch(rows, async (row) => {
-        await perRowFallback(row);
-        done += 1;
-        options.onBulkProgress?.(op, done, rows.length);
-      });
-      return { succeeded: 0, failed: new Map(), fallbackReason: reason };
+      await runBatch(rows, perRowFallback);
+      return undefined;
     }
   }
 
-  function previewBulk(rows: T[]) {
-    return runBulkStage(
+  async function previewBulk(rows: T[]) {
+    await runBulkStage(
       rows, 'previewing', 'previewing', bulkPreview,
       (r) => ({ stage: 'previewed', previewUrl: daPathToPreviewUrl(r.path) } as Partial<T>),
       previewOne,
     );
   }
 
-  function publishBulk(rows: T[]) {
-    return runBulkStage(
+  async function publishBulk(rows: T[]) {
+    await runBulkStage(
       rows, 'publishing', 'publishing', bulkPublish,
       (r) => ({ stage: 'published', liveUrl: daPathToLiveUrl(r.path) } as Partial<T>),
       publishOne,
     );
   }
 
-  function unpublishBulk(rows: T[]) {
-    return runBulkStage(
+  async function unpublishBulk(rows: T[]) {
+    await runBulkStage(
       rows, 'unpublishing', 'unpublishing', bulkUnpublish,
       () => ({ stage: 'unpublished', liveUrl: undefined } as Partial<T>),
       unpublishOne,
@@ -187,21 +169,10 @@ export function useDaDocumentActions<T extends RowResult>(
     previewRow: previewOne,
     publishRow: publishOne,
     unpublishRow: unpublishOne,
-    deleteRow: async (row) => { await deleteOne(row); },
+    deleteRow: deleteOne,
     previewBulk,
     publishBulk,
     unpublishBulk,
-    deleteBulk: async (rows) => {
-      const failed = new Map<string, string>();
-      let done = 0;
-      options.onBulkProgress?.('deleting', 0, rows.length);
-      await runBatch(rows, async (row) => {
-        const err = await deleteOne(row);
-        if (err) failed.set(row.path, err);
-        done += 1;
-        options.onBulkProgress?.('deleting', done, rows.length);
-      });
-      return { succeeded: rows.length - failed.size, failed };
-    },
+    deleteBulk: (rows) => runBatch(rows, deleteOne),
   };
 }

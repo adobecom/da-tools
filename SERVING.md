@@ -15,7 +15,6 @@ The repo root serves a landing page; each tool is served at its own subfolder pa
 | `block-finder` (static) | https://da.live/app/adobecom/da-tools/block-finder/index | https://main--da-tools--adobecom.aem.live/block-finder/index.html |
 | `document-counter` (static) | https://da.live/app/adobecom/da-tools/document-counter/index | https://main--da-tools--adobecom.aem.live/document-counter/index.html |
 | `block-index` | https://da.live/app/adobecom/da-tools/block-index/dist/index | https://main--da-tools--adobecom.aem.live/block-index/dist/index.html |
-| `da-copy-updater` | https://da.live/app/adobecom/da-tools/da-copy-updater/dist/index | https://main--da-tools--adobecom.aem.live/da-copy-updater/dist/index.html |
 | `github-package-comparator` (static) | https://da.live/app/adobecom/da-tools/github-package-comparator/index | https://main--da-tools--adobecom.aem.live/github-package-comparator/index.html |
 
 Append `?ref=<branch>` to the da.live URL (or use `<branch>--da-tools--adobecom.aem.live` for the direct URL) to view a non-`main` branch.

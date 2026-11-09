@@ -4,31 +4,10 @@ A DA (Document Authoring) tool for managing documents in a DA folder — point i
 documents it contains, and preview / publish / unpublish / delete them. Modeled on the **Document
 Manager** tab of [pdp-document-generator](../pdp-document-generator/).
 
-## Bulk copy edits
+> **Status: scaffold.** This is currently a Vite + React "hello world" that renders and performs the DA
+> auth-token handshake. The document-management features are not built yet.
 
-Select documents, then use **Update shipping copy** or **Rollback to previous version** in the bulk bar
-(MWPW-214582: in the `highlight` block, "Free shipping and returns" → "Easy 30-day returns").
-
-- **Update shipping copy**: for each document with exactly one matching heading, saves a DA version
-  labeled `Before MWPW-214582 copy update` (the pre-edit content), writes the edit, and reads it back to
-  verify. Other wording is reported in the **Copy** column and left alone (no version, no write).
-  Re-running is safe: finished documents report "Already updated".
-- **Rollback to previous version**: restores each document to its most recent
-  `Before MWPW-214582 copy update` version, replacing the whole document (edits made after the update are
-  discarded). A `Before MWPW-214582 rollback` version is saved first, so a rollback can itself be undone
-  from DA history. Documents that already have the original copy are left alone.
-- Neither button previews or publishes. Afterwards, set the **Copy** filter (e.g. "Updated" or
-  "Rolled back") and the **Status** filter (e.g. "Published"), select all, then Preview / Publish.
-
-Presets live in `src/lib/copyPresets.ts`; add a preset to get another Update / Rollback button pair.
-
-## Progress and activity log
-
-Every long operation (scan, status refresh, batch load, Preview / Publish / Unpublish / Delete, Update /
-Rollback) shows a progress bar with elapsed time and an estimate. Update / Rollback also show live counts
-(changed, already done, skipped for wording / missing copy, failed). The **Activity log** below the bar
-records each operation's start and outcome, plus one line per skipped or failed document with the
-reason; it can be downloaded or cleared.
+Opens in DA at: **https://da.live/app/adobecom/da-tools/da-document-manager/dist/index**
 
 ## Stack
 
@@ -42,7 +21,6 @@ The DA auth token is obtained in `src/main.tsx` (from the da.live Nx Shell SDK w
 npm install
 echo "VITE_DA_TOKEN=your_token_here" > .env.local   # only needed for DA calls when run outside da.live
 npm run dev      # port 3000
-npm test         # Vitest: copy-edit logic
 npm run build    # compiles to ./dist (commit the result)
 ```
 
