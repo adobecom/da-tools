@@ -131,7 +131,6 @@ export default function DocumentManagerView() {
   const [confirmOp, setConfirmOp] = useState<BulkConfirmOp | null>(null);
   const [copyConfirm, setCopyConfirm] = useState<{ preset: CopyPreset; direction: CopyDirection } | null>(null);
   const [copyFilter, setCopyFilter] = useState<string>(ALL);
-  const [copySummary, setCopySummary] = useState<{ title: string; counts: [string, number][] } | null>(null);
   const [copyCountersState, setCopyCounters] = useState<ProgressCounter[] | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   function logMany(entries: { level: LogLevel; msg: string }[]) {
@@ -498,7 +497,6 @@ export default function DocumentManagerView() {
     const op = direction === 'update' ? 'updating-copy' : 'rolling-back';
     const verb = direction === 'update' ? preset.updateLabel : preset.rollbackLabel;
     const soFar: CopyResult[] = [];
-    setCopySummary(null);
     setCopyCounters(copyCounters([], direction));
     setBulkProgress({ op, done: 0, total: paths.length });
     log('info', `${verb}: starting on ${paths.length} documents`);
@@ -530,12 +528,9 @@ export default function DocumentManagerView() {
     const counts = new Map<string, number>();
     for (const r of results.values()) counts.set(copyResultLabel(r), (counts.get(copyResultLabel(r)) ?? 0) + 1);
     const sortedCounts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-    setCopySummary({
-      title: `${verb}: ${results.size} document${results.size !== 1 ? 's' : ''}`,
-      counts: sortedCounts,
-    });
     const failed = [...results.values()].filter((r) => r.outcome === 'error').length;
     log(failed > 0 ? 'warn' : 'success', `${verb} finished: ${sortedCounts.map(([l, n]) => `${l} ${n}`).join(', ')}`);
+    log('info', 'Nothing was previewed or published. To do that, filter by Copy and Status, select all, then Preview / Publish.');
   }
 
   /** Runs a Preview / Publish / Unpublish / Delete bulk action and logs its outcome. */
@@ -672,21 +667,6 @@ export default function DocumentManagerView() {
       )}
 
       <ActivityLog lines={logs} onClear={() => setLogs([])} />
-
-      {copySummary && (
-        <div className="flex items-start gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
-          <div className="flex-1">
-            <p className="font-medium">{copySummary.title}</p>
-            <p className="mt-1 text-gray-600">
-              {copySummary.counts.map(([label, n]) => `${label}: ${n}`).join(' · ')}
-            </p>
-            <p className="mt-1 text-xs text-gray-500">Nothing was previewed or published. Use the Copy filter (e.g. Updated / Rolled back) together with the Status filter, select all, then Preview / Publish.</p>
-          </div>
-          <button type="button" onClick={() => setCopySummary(null)} className="text-gray-500 hover:text-gray-800 font-medium cursor-pointer">
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {crawlErrors.length > 0 && !dismissedErrors && (
         <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
