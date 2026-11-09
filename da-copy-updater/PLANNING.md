@@ -14,7 +14,7 @@ Opens in DA at: **https://da.live/app/adobecom/da-tools/da-copy-updater/dist/ind
 | D1 | Lives in **da-tools** as a Vite + React + TS + Tailwind tool (same stack as `da-document-manager`). Runs in the browser; the DA token comes from the da.live Nx Shell SDK. |
 | D2 | **UI:** a folder-path input plus a phased flow, **Scan (dry run) → Apply & Preview → Publish**, not a single button. Progress bar, bucket counters, log console, results table, downloadable report. |
 | D3 | **Find/replace is hardcoded for v1** (block `highlight`, element `h2`, exact text), but defined as a `ReplaceRule` object so a later "Find & Replace" feature (document-manager fast-follow) can expose it as inputs. |
-| D4 | **Skip docs with unpublished changes** (source edited after last publish) and list them in the report. |
+| D4 | **Docs with unpublished changes** (source edited or previewed after last publish) **get the source edit but are never previewed or published** (bucket `update-unpublished-changes`). Originally skipped; changed at the user's request. |
 | D5 | **Never publish a doc that wasn't live before the run.** Not-live docs (including drafts and default documents) get a source edit only. |
 | D6 | **Default documents are in scope.** The 9 templates in `/express/print/document-generator/` have the identical highlight row; the same engine updates them (source only, per D5). |
 | D7 | Wording variants, a missing block, or duplicate matches are **skipped and reported, never edited**. |
@@ -23,6 +23,8 @@ Opens in DA at: **https://da.live/app/adobecom/da-tools/da-copy-updater/dist/ind
 | D10 | Final copy "Easy 30-day returns" is **confirmed** with Zazzle. |
 | D11 | The DA/AEM admin helpers are **copied** from `pdp-document-generator` (with a header comment naming the source) rather than extracted to a shared package, so this ticket doesn't touch a production tool. Extract to a shared module later with the document-manager feature. |
 | D12 | The engine runs on the main thread (needs `DOMParser`). Mitigate background-tab throttling with the Screen Wake Lock API, a "keep this tab visible" banner, and a `beforeunload` warning while running. Sleeps and job polling use a Web Worker timer, which Chrome doesn't throttle in background tabs. |
+| D13 | **Rollback** step, available any time after Update. Unchanged docs get the saved `Before ... copy update` version restored, and pages this tool previewed/published are re-previewed/re-published. Docs edited after our update get only our heading reverted (author edits kept) and are not republished. A `Before ... rollback` version is saved first. |
+| D14 | No pdp-render-checker QA step; the QA URL list is for manual spot-checks. |
 
 ## The rule (v1)
 
@@ -75,7 +77,7 @@ the length delta equals `replace.length - find.length`. If it fails → `error`,
 6. Final bucket for each doc:
    - `will-update-and-publish`: `match` + live + no unpublished changes.
    - `will-update-source-only`: `match` + not live.
-   - `skip-unpublished-changes`: `match` + live + unpublished changes.
+   - `update-unpublished-changes`: `match` + live + unpublished changes (source edit only).
    - `already-updated`, `variant`, `no-block`, `no-match`, `ambiguous`, `error`.
 7. Show counts per bucket and per product type (first folder under the root). Persist the scan to the
    journal.
@@ -93,8 +95,7 @@ Before preview, each doc must still read back exactly as we wrote it (`writtenHa
 otherwise it's skipped. Then run a bulk preview job (chunks of 500, 3 concurrent jobs) for the updated docs that were live before
 the run, and reconcile with bulk status. Preview failures are listed with a **Retry** button.
 
-**QA gate:** export the updated docs as `www.stage.adobe.com/...` URLs (pdp-render-checker accepts these
-over VPN; `.aem.page` is auth-gated) and run pdp-render-checker before publishing.
+**QA:** spot-check previewed pages; **QA URLs** exports them as `www.stage.adobe.com/...` URLs (VPN).
 
 ### 3. Publish (requires typed confirmation when the root is outside `/drafts/`)
 Pre-checks per doc: still live, preview time unchanged since our preview, no source edit after it, and
@@ -163,7 +164,7 @@ These are estimates; measure them on the test folder.
 
 ## Status
 
-Built: all phases, journal/resume, report, UI; 38 unit/flow tests pass. Next: the test run below.
+Built: all phases incl. rollback, journal/resume, report, UI; 44 unit/flow tests pass. Next: the test run below.
 
 ## Test plan
 

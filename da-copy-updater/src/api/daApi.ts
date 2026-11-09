@@ -147,6 +147,26 @@ export async function createVersion(daPath: string, label: string, signal?: Abor
   if (!resp.ok) throw new Error(`version: ${resp.status}`);
 }
 
+interface VersionEntry { label?: string; url?: string; timestamp?: number }
+
+/** URL of the most recent DA version with this label, or null if there is none. */
+export async function findVersionUrl(daPath: string, label: string, signal?: AbortSignal): Promise<string | null> {
+  const resp = await fetchWithRetry(`${DA_API}/versionlist${daPath}`, { headers: authHeaders(), cache: 'no-store', signal });
+  if (!resp.ok) throw new Error(`version list: ${resp.status}`);
+  const list = await resp.json() as VersionEntry[];
+  const match = list
+    .filter((v) => v.label === label && v.url)
+    .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))[0];
+  return match?.url ?? null;
+}
+
+/** Content of a version, given the `url` from the version list (e.g. `/versionsource/org/repo/id/vid.html`). */
+export async function readVersion(url: string, signal?: AbortSignal): Promise<string> {
+  const resp = await fetchWithRetry(`${DA_API}${url}`, { headers: authHeaders(), cache: 'no-store', signal });
+  if (!resp.ok) throw new Error(`version read: ${resp.status}`);
+  return resp.text();
+}
+
 // ─── AEM admin bulk jobs ─────────────────────────────────────────────────────
 
 const STATUS_CHUNK = 1000;

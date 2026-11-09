@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { daPathToEditUrl, daPathToLiveUrl } from '../api/daApi';
-import { resultFor, UPDATE_BUCKETS, type DocRecord } from '../engine/model';
+import { inRollback, resultFor, UPDATE_BUCKETS, type DocRecord } from '../engine/model';
 
 function tone(result: string): string {
-  if (result.startsWith('failed') || result === 'scan-error' || result.includes('check failed')) return 'bg-red-100 text-red-800';
-  if (result === 'published' || result.startsWith('updated (source') || result === 'already-updated') return 'bg-green-100 text-green-800';
+  if (result.includes('failed') || result === 'scan-error') return 'bg-red-100 text-red-800';
+  if (result.startsWith('rolled back') || result.startsWith('rolling back')) return 'bg-purple-100 text-purple-800';
+  if (result === 'published' || result.startsWith('updated (not') || result === 'already-updated') return 'bg-green-100 text-green-800';
   if (result.startsWith('pending') || result.startsWith('updated') || result.startsWith('previewed')) return 'bg-blue-100 text-blue-800';
   return 'bg-amber-100 text-amber-800';
 }
@@ -58,7 +59,7 @@ export function ResultsTable({ records, root }: { records: DocRecord[]; root: st
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {virtualizer.getVirtualItems().map((vi) => {
                 const { r, result } = rows[vi.index];
-                const reason = r.skipReason ?? r.error ?? r.detail ?? '';
+                const reason = r.rollbackError ?? r.rollbackNote ?? r.skipReason ?? r.error ?? r.detail ?? '';
                 const showLive = r.publishLastModified !== undefined || r.stage === 'published';
                 return (
                   <div
@@ -90,15 +91,16 @@ export function ResultsTable({ records, root }: { records: DocRecord[]; root: st
 
 export function TypeSummary({ records }: { records: DocRecord[] }) {
   const rows = useMemo(() => {
-    const m = new Map<string, { total: number; toUpdate: number; done: number; skipped: number; failed: number }>();
+    const m = new Map<string, { total: number; toUpdate: number; done: number; skipped: number; failed: number; rolledBack: number }>();
     for (const r of records) {
-      const row = m.get(r.productType) ?? { total: 0, toUpdate: 0, done: 0, skipped: 0, failed: 0 };
+      const row = m.get(r.productType) ?? { total: 0, toUpdate: 0, done: 0, skipped: 0, failed: 0, rolledBack: 0 };
       row.total += 1;
       const isUpdate = UPDATE_BUCKETS.has(r.bucket);
       if (isUpdate && r.stage !== 'skipped') row.toUpdate += 1;
-      if (r.stage === 'published' || (r.stage === 'updated' && r.bucket === 'update-source-only')) row.done += 1;
+      if (!inRollback(r) && (r.stage === 'published' || (r.stage === 'updated' && r.bucket !== 'update-and-publish'))) row.done += 1;
       if (r.stage === 'skipped' || (!isUpdate && r.bucket !== 'already-updated')) row.skipped += 1;
-      if (r.error || r.bucket === 'scan-error') row.failed += 1;
+      if (r.error || r.rollbackError || r.bucket === 'scan-error') row.failed += 1;
+      if (r.rollbackStage) row.rolledBack += 1;
       m.set(r.productType, row);
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -109,7 +111,7 @@ export function TypeSummary({ records }: { records: DocRecord[] }) {
       <table className="w-full min-w-[520px] text-xs">
         <thead className="bg-gray-50 text-gray-600">
           <tr>
-            {['Product type', 'Documents', 'To update', 'Done', 'Skipped', 'Failed'].map((h) => (
+            {['Product type', 'Documents', 'To update', 'Done', 'Skipped', 'Failed', 'Rolled back'].map((h) => (
               <th key={h} className="px-3 py-2 text-left font-medium">{h}</th>
             ))}
           </tr>
@@ -123,6 +125,7 @@ export function TypeSummary({ records }: { records: DocRecord[] }) {
               <td className="px-3 py-1.5 text-green-700">{c.done.toLocaleString()}</td>
               <td className="px-3 py-1.5 text-amber-700">{c.skipped.toLocaleString()}</td>
               <td className="px-3 py-1.5 text-red-700">{c.failed.toLocaleString()}</td>
+              <td className="px-3 py-1.5 text-purple-700">{c.rolledBack.toLocaleString()}</td>
             </tr>
           ))}
         </tbody>

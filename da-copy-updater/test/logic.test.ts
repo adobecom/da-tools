@@ -89,19 +89,19 @@ describe('bucketForMatch', () => {
       .toBe('update-and-publish');
   });
 
-  it('skips a live page edited after its last publish', () => {
+  it('flags a live page edited after its last publish (update, never publish)', () => {
     expect(bucketForMatch({ ok: true, sourceLastModified: t('2026-10-02T00:00:00Z'), previewLastModified: t('2026-10-01T00:00:00Z'), publishLastModified: t('2026-10-01T00:01:00Z') }))
-      .toBe('skip-unpublished-changes');
+      .toBe('update-unpublished-changes');
   });
 
-  it('skips a live page previewed after its last publish', () => {
+  it('flags a live page previewed after its last publish', () => {
     expect(bucketForMatch({ ok: true, sourceLastModified: t('2026-09-30T00:00:00Z'), previewLastModified: t('2026-10-02T00:00:00Z'), publishLastModified: t('2026-10-01T00:01:00Z') }))
-      .toBe('skip-unpublished-changes');
+      .toBe('update-unpublished-changes');
   });
 
   it('falls back to the DA list timestamp when the job has no source time', () => {
     expect(bucketForMatch({ ok: true, publishLastModified: t('2026-10-01T00:00:00Z') }, t('2026-10-05T00:00:00Z')))
-      .toBe('skip-unpublished-changes');
+      .toBe('update-unpublished-changes');
   });
 
   it('only edits the source of a page that is not live', () => {
@@ -143,7 +143,9 @@ describe('helpers', () => {
     const rec: DocRecord = { path: '/a/b/c.html', productType: 'c', bucket: 'update-and-publish', stage: 'previewed' };
     expect(resultFor(rec)).toBe('previewed, pending publish');
     expect(resultFor({ ...rec, error: 'x' })).toBe('failed (publish)');
-    expect(resultFor({ ...rec, bucket: 'update-source-only', stage: 'updated' })).toBe('updated (source only)');
+    expect(resultFor({ ...rec, bucket: 'update-source-only', stage: 'updated' })).toBe('updated (not live)');
+    expect(resultFor({ ...rec, ourPreviewLastModified: 1, rollbackStage: 'restored', rollbackMethod: 'version' })).toBe('rolling back, pending preview');
+    expect(resultFor({ ...rec, stage: 'published', rollbackStage: 'published', rollbackMethod: 'version' })).toBe('rolled back');
     expect(resultFor({ ...rec, bucket: 'variant', stage: 'scanned' })).toBe('variant');
   });
 });

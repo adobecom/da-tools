@@ -10,7 +10,7 @@ Open the **[DA Tools home](https://da.live/app/adobecom/da-tools/index)** page f
 |---|---|---|
 | **PDP Document Generator** — bulk-generate DA pages from product data + templates | [`pdp-document-generator/`](./pdp-document-generator/) | https://da.live/app/adobecom/da-tools/pdp-document-generator/dist/index |
 | **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/adobecom/da-tools/da-document-generator/dist/index |
-| **Copy Updater** — targeted copy change across a DA folder, then preview/publish only the changed pages | [`da-copy-updater/`](./da-copy-updater/) | https://da.live/app/adobecom/da-tools/da-copy-updater/dist/index |
+| **Copy Updater** — targeted copy change across a DA folder; publishes pages that were already live; supports rollback | [`da-copy-updater/`](./da-copy-updater/) | https://da.live/app/adobecom/da-tools/da-copy-updater/dist/index |
 | **Block Finder** — find every `/express` page that uses a given block | [`block-finder/`](./block-finder/) | https://da.live/app/adobecom/da-tools/block-finder/index |
 | **Document Counter** — count HTML documents under any directory path | [`document-counter/`](./document-counter/) | https://da.live/app/adobecom/da-tools/document-counter/index |
 | **Block Index** — pick a known repo, or add any `adobecom` DA repo by name, and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/adobecom/da-tools/block-index/dist/index |

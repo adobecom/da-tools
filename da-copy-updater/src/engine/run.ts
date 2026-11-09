@@ -1,12 +1,13 @@
 import {
-  bulkMutate, bulkStatus, crawlDocs, createVersion, fetchLivePlain, readSource, writeSource,
+  bulkMutate, bulkStatus, crawlDocs, createVersion, fetchLivePlain, findVersionUrl, readSource, readVersion, writeSource,
 } from '../api/daApi';
 import { runPool } from '../lib/concurrency';
 import { isAbortError } from '../lib/http';
 import { classify } from './classify';
 import type { JournalWriter } from './journal';
 import {
-  bucketForMatch, hashText, productTypeFor, UPDATE_BUCKETS, type DocRecord,
+  bucketForMatch, hashText, inRollback, productTypeFor, rollbackNeedsPreview, rollbackNeedsPublish,
+  UPDATE_BUCKETS, wroteDoc, type DocRecord,
 } from './model';
 import type { ReplaceRule } from './rule';
 
@@ -40,9 +41,18 @@ function throwIfAborted(signal: AbortSignal) {
   if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
 }
 
-export function eligibleFor(phase: 'apply' | 'preview' | 'publish' | 'verify', records: Iterable<DocRecord>): DocRecord[] {
+export type EligiblePhase = 'apply' | 'preview' | 'publish' | 'verify' | 'rollback';
+
+export function eligibleFor(phase: EligiblePhase, records: Iterable<DocRecord>): DocRecord[] {
   const out: DocRecord[] = [];
   for (const r of records) {
+    if (phase === 'rollback') {
+      if (wroteDoc(r) && r.rollbackStage === undefined) out.push(r);
+      else if (r.rollbackStage === 'restored' && rollbackNeedsPreview(r)) out.push(r);
+      else if (r.rollbackStage === 'previewed' && rollbackNeedsPublish(r)) out.push(r);
+      continue;
+    }
+    if (inRollback(r)) continue;
     if (phase === 'apply' && UPDATE_BUCKETS.has(r.bucket) && r.stage === 'scanned') out.push(r);
     if (phase === 'preview' && r.bucket === 'update-and-publish' && r.stage === 'updated') out.push(r);
     if (phase === 'publish' && r.stage === 'previewed') out.push(r);
@@ -182,35 +192,53 @@ export async function applyUpdates(ctx: PhaseContext): Promise<void> {
 }
 
 /**
- * Keeps only documents whose source is still exactly what we wrote. Anything an author changed after
- * our update is skipped so their unreviewed edit is never previewed or published by this tool.
+ * Re-reads each document and keeps only those whose source still hashes to one of `expected`.
+ * Anything else was edited by someone after our write and is handed to `onChanged`.
  */
-async function unchangedSinceWrite(ctx: PhaseContext, recs: DocRecord[]): Promise<DocRecord[]> {
+async function unchangedSince(
+  ctx: PhaseContext,
+  recs: DocRecord[],
+  expected: (r: DocRecord) => (string | undefined)[],
+  onChanged: (r: DocRecord) => void,
+  onError: (r: DocRecord, msg: string) => void,
+): Promise<DocRecord[]> {
   const { journal, signal, emit } = ctx;
   const ok: DocRecord[] = [];
   let done = 0;
-  emit({ type: 'progress', label: 'Checking for edits since our update', done: 0, total: recs.length });
+  emit({ type: 'progress', label: 'Checking for edits since our change', done: 0, total: recs.length });
   await runPool(recs, async (rec) => {
     try {
       const h = hashText(await readSource(rec.path, signal));
-      if (h === rec.writtenHash || h === rec.pendingHash) {
+      if (expected(rec).includes(h)) {
         ok.push(rec);
       } else {
-        rec.stage = 'skipped';
-        rec.skipReason = 'Edited by someone else after our update';
-        emit({ type: 'log', level: 'warn', msg: `Skipped ${rec.path}: ${rec.skipReason}` });
+        onChanged(rec);
         journal.put(rec);
       }
     } catch (err) {
       if (isFatal(err)) throw err;
-      rec.error = `Re-check failed (${errMsg(err)}); retry this step`;
+      onError(rec, `Re-check failed (${errMsg(err)}); retry this step`);
       journal.put(rec);
     }
     done += 1;
-    emit({ type: 'progress', label: 'Checking for edits since our update', done, total: recs.length });
+    emit({ type: 'progress', label: 'Checking for edits since our change', done, total: recs.length });
   }, READ_CONCURRENCY, signal);
   throwIfAborted(signal);
   return ok;
+}
+
+/** Keeps only documents whose source is still exactly what we wrote, so author edits are never pushed. */
+function unchangedSinceWrite(ctx: PhaseContext, recs: DocRecord[]): Promise<DocRecord[]> {
+  return unchangedSince(
+    ctx, recs,
+    (r) => [r.writtenHash, r.pendingHash],
+    (r) => {
+      r.stage = 'skipped';
+      r.skipReason = 'Edited by someone else after our update';
+      ctx.emit({ type: 'log', level: 'warn', msg: `Skipped ${r.path}: ${r.skipReason}` });
+    },
+    (r, msg) => { r.error = msg; },
+  );
 }
 
 function skip(ctx: PhaseContext, rec: DocRecord, reason: string) {
@@ -351,4 +379,214 @@ export async function verifyLive(ctx: PhaseContext): Promise<void> {
   throwIfAborted(signal);
   emit({ type: 'changed' });
   emit({ type: 'log', level: ok === todo.length ? 'success' : 'warn', msg: `New copy confirmed live on ${ok}/${todo.length} pages` });
+}
+
+function rollbackNote(ctx: PhaseContext, rec: DocRecord, note: string) {
+  rec.rollbackNote = note;
+  rec.rollbackError = undefined;
+  ctx.journal.put(rec);
+  ctx.emit({ type: 'log', level: 'warn', msg: `${rec.path}: ${note}` });
+}
+
+/**
+ * Rollback, step 1: put back the original copy in every document this tool wrote. A document that
+ * is unchanged since our write gets its saved "before" version restored exactly. A document someone
+ * edited afterwards gets only our heading reverted (their edits are kept) and is never republished.
+ */
+async function rollbackSources(ctx: PhaseContext): Promise<void> {
+  const { rule, journal, signal, emit } = ctx;
+  const todo = [...ctx.records.values()].filter((r) => wroteDoc(r) && r.rollbackStage === undefined);
+  if (todo.length === 0) return;
+  const reverse = { ...rule, find: rule.replace, replace: rule.find };
+  let done = 0;
+  emit({ type: 'log', level: 'info', msg: `Restoring the original copy in ${todo.length} documents` });
+  emit({ type: 'progress', label: 'Restoring documents', done: 0, total: todo.length });
+
+  await runPool(todo, async (rec) => {
+    try {
+      const html = await readSource(rec.path, signal);
+      const h = hashText(html);
+      const interruptedWrite = rec.rollbackPendingHash !== undefined && h === rec.rollbackPendingHash;
+
+      if (!interruptedWrite) {
+        if (classify(html, rule).outcome === 'match') {
+          rec.rollbackMethod = 'already-original';
+          rec.rollbackNote = 'Already had the original copy; nothing to restore';
+          rec.rollbackHash = h;
+          rec.rollbackStage = 'restored';
+          rec.rollbackError = undefined;
+          return;
+        }
+        let restored: string | null = null;
+        const unchanged = h === rec.writtenHash || h === rec.pendingHash;
+        rec.rollbackNote = undefined;
+        if (unchanged) {
+          const url = await findVersionUrl(rec.path, rule.versionLabel, signal);
+          const version = url ? await readVersion(url, signal) : null;
+          if (version !== null && classify(version, rule).outcome === 'match') {
+            restored = version;
+            rec.rollbackMethod = 'version';
+          }
+        }
+        if (restored === null) {
+          const r = classify(html, reverse);
+          if (r.outcome !== 'match') throw new Error(`can't revert: the updated heading now reads as "${r.outcome}"`);
+          restored = r.newHtml!;
+          rec.rollbackMethod = 'reverted-copy';
+          rec.rollbackNote = unchanged
+            ? 'Saved version not found; reverted the copy change only and did not republish'
+            : 'Edited after our update; reverted the copy change only (their edits kept) and did not republish';
+        }
+        rec.rollbackPendingHash = hashText(restored);
+        await journal.putNow(rec);
+        await createVersion(rec.path, rule.rollbackVersionLabel);
+        await writeSource(rec.path, restored);
+      }
+
+      const back = await readSource(rec.path);
+      if (classify(back, rule).outcome !== 'match') throw new Error('verify: original copy not found after rollback');
+      rec.rollbackHash = hashText(back);
+      rec.rollbackStage = 'restored';
+      rec.rollbackError = undefined;
+    } catch (err) {
+      if (isFatal(err)) throw err;
+      rec.rollbackError = errMsg(err);
+      emit({ type: 'log', level: 'error', msg: `Rollback ${rec.path}: ${rec.rollbackError}` });
+    } finally {
+      journal.put(rec);
+      done += 1;
+      emit({ type: 'progress', label: 'Restoring documents', done, total: todo.length });
+      emit({ type: 'changed' });
+    }
+  }, WRITE_CONCURRENCY, signal);
+  throwIfAborted(signal);
+}
+
+const unchangedSinceRollback = (ctx: PhaseContext, recs: DocRecord[], note: string) => unchangedSince(
+  ctx, recs,
+  (r) => [r.rollbackHash],
+  (r) => rollbackNote(ctx, r, note),
+  (r, msg) => { r.rollbackError = msg; },
+);
+
+/**
+ * Rollback, step 2: decide which restored pages need re-preview / re-publish from their current
+ * status, not only from what this tool confirmed. A forward preview or publish that ran but was
+ * interrupted before confirmation still moved the timestamps past the scan-time values, so those
+ * pages are reverted too. The restored content equals the page as it was live at scan time.
+ */
+async function rollbackPlan(ctx: PhaseContext): Promise<void> {
+  const { journal, signal, emit } = ctx;
+  const todo = [...ctx.records.values()].filter((r) => r.rollbackStage === 'restored'
+    && r.rollbackMethod === 'version' && !r.rollbackNote && r.rollbackRepreview === undefined);
+  if (todo.length === 0) return;
+  for (const rec of todo.filter((r) => r.bucket !== 'update-and-publish')) {
+    rec.rollbackRepreview = false;
+    rec.rollbackRepublish = false;
+    journal.put(rec);
+  }
+  const check = todo.filter((r) => r.bucket === 'update-and-publish');
+  if (check.length === 0) return;
+  const statuses = await bulkStatus(check.map((r) => r.path), signal, (d, t) => emit({ type: 'progress', label: 'Checking what was previewed / published', done: d, total: t }));
+  for (const rec of check) {
+    const st = statuses.get(rec.path);
+    if (!st?.ok) {
+      rec.rollbackError = 'Publish status unknown; run Roll back again';
+    } else {
+      const republish = st.publishLastModified !== undefined && st.publishLastModified > (rec.publishLastModified ?? 0);
+      const repreview = republish || (st.previewLastModified !== undefined && st.previewLastModified > (rec.previewLastModified ?? 0));
+      rec.rollbackRepublish = republish;
+      rec.rollbackRepreview = repreview;
+      rec.rollbackPreviewBaseline = st.previewLastModified;
+      rec.rollbackPublishBaseline = st.publishLastModified;
+      rec.rollbackError = undefined;
+    }
+    journal.put(rec);
+  }
+  emit({ type: 'changed' });
+}
+
+/** Rollback, step 3: re-preview restored pages whose preview changed after the scan. */
+async function rollbackPreview(ctx: PhaseContext): Promise<void> {
+  const { journal, signal, emit } = ctx;
+  const candidates = [...ctx.records.values()].filter((r) => r.rollbackStage === 'restored'
+    && r.rollbackRepreview !== undefined && rollbackNeedsPreview(r));
+  if (candidates.length === 0) return;
+  const todo = await unchangedSinceRollback(ctx, candidates, 'Edited after the rollback; not re-previewed or republished');
+  const paths = todo.map((r) => r.path);
+  emit({ type: 'log', level: 'info', msg: `Re-previewing ${todo.length} restored pages` });
+  await bulkMutate('preview', paths, signal,
+    (d, t) => emit({ type: 'progress', label: 'Re-previewing restored pages', done: d, total: t }),
+    (msg) => emit({ type: 'log', level: 'warn', msg }));
+  const statuses = await bulkStatus(paths, signal, (d, t) => emit({ type: 'progress', label: 'Confirming preview', done: d, total: t }));
+  for (const rec of todo) {
+    const st = statuses.get(rec.path);
+    if (st?.ok && st.previewLastModified && st.previewLastModified > (rec.rollbackPreviewBaseline ?? 0)) {
+      rec.rollbackStage = 'previewed';
+      rec.rollbackPreviewLastModified = st.previewLastModified;
+      rec.rollbackError = undefined;
+    } else {
+      rec.rollbackError = 'Rollback preview not confirmed; run Roll back again';
+    }
+    journal.put(rec);
+  }
+  emit({ type: 'changed' });
+}
+
+/** Rollback, step 4: re-publish restored pages whose publish changed after the scan, so the live site reverts. */
+async function rollbackPublish(ctx: PhaseContext): Promise<void> {
+  const { journal, signal, emit } = ctx;
+  const candidates = [...ctx.records.values()].filter((r) => r.rollbackStage === 'previewed' && rollbackNeedsPublish(r));
+  if (candidates.length === 0) return;
+  const pre = await bulkStatus(candidates.map((r) => r.path), signal, (d, t) => emit({ type: 'progress', label: 'Re-checking before republish', done: d, total: t }));
+  const ready: DocRecord[] = [];
+  for (const rec of candidates) {
+    const st = pre.get(rec.path);
+    if (!st?.ok) {
+      rec.rollbackError = 'Publish status unknown; run Roll back again';
+      journal.put(rec);
+    } else if (st.publishLastModified === undefined) {
+      rollbackNote(ctx, rec, 'No longer live; source restored but not republished');
+    } else if (st.previewLastModified !== rec.rollbackPreviewLastModified) {
+      rollbackNote(ctx, rec, 'Previewed again by someone else after the rollback; not republished');
+    } else {
+      ready.push(rec);
+    }
+  }
+  const todo = await unchangedSinceRollback(ctx, ready, 'Edited after the rollback; not republished');
+  const paths = todo.map((r) => r.path);
+  emit({ type: 'log', level: 'info', msg: `Re-publishing ${todo.length} restored pages` });
+  await bulkMutate('live', paths, signal,
+    (d, t) => emit({ type: 'progress', label: 'Re-publishing restored pages', done: d, total: t }),
+    (msg) => emit({ type: 'log', level: 'warn', msg }));
+  const post = await bulkStatus(paths, signal, (d, t) => emit({ type: 'progress', label: 'Confirming publish', done: d, total: t }));
+  for (const rec of todo) {
+    const st = post.get(rec.path);
+    if (st?.ok && st.publishLastModified && st.publishLastModified > (rec.rollbackPublishBaseline ?? 0)) {
+      rec.rollbackStage = 'published';
+      rec.rollbackError = undefined;
+    } else {
+      rec.rollbackError = 'Rollback publish not confirmed; run Roll back again';
+    }
+    journal.put(rec);
+  }
+  emit({ type: 'changed' });
+}
+
+/**
+ * Roll back everything this tool changed in the run: restore sources, then re-preview and
+ * re-publish the pages it had previewed/published. Re-running continues where it stopped.
+ */
+export async function rollback(ctx: PhaseContext): Promise<void> {
+  await rollbackSources(ctx);
+  await rollbackPlan(ctx);
+  await rollbackPreview(ctx);
+  await rollbackPublish(ctx);
+  const left = eligibleFor('rollback', ctx.records.values()).length;
+  ctx.emit({ type: 'changed' });
+  ctx.emit({
+    type: 'log',
+    level: left === 0 ? 'success' : 'warn',
+    msg: left === 0 ? 'Rollback complete' : `Rollback finished with ${left} documents still to retry (see results)`,
+  });
 }

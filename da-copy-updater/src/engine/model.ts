@@ -1,11 +1,14 @@
 import type { ClassifyOutcome } from './classify';
 import type { PathStatus } from '../api/daApi';
 
-/** Where the dry-run scan puts a document. Only the two `update-*` buckets are ever written. */
+/**
+ * Where the dry-run scan puts a document. Only `update-*` buckets are written, and only
+ * `update-and-publish` is ever previewed or published.
+ */
 export type ScanBucket =
   | 'update-and-publish'
   | 'update-source-only'
-  | 'skip-unpublished-changes'
+  | 'update-unpublished-changes'
   | 'skip-status-unknown'
   | Exclude<ClassifyOutcome, 'match'>
   | 'scan-error';
@@ -36,13 +39,38 @@ export interface DocRecord {
   /** previewLastModified confirmed after our preview, used to detect later re-previews. */
   ourPreviewLastModified?: number;
   liveVerified?: boolean;
+  /** Rollback progress: source restored, then (only where we had previewed/published) re-previewed/re-published. */
+  rollbackStage?: 'restored' | 'previewed' | 'published';
+  /** `version` = saved version restored; `reverted-copy` = only our heading reverted; `already-original` = nothing to do. */
+  rollbackMethod?: 'version' | 'reverted-copy' | 'already-original';
+  /** Hash of the HTML a rollback is about to write (recognizes an interrupted rollback write). */
+  rollbackPendingHash?: string;
+  /** Hash of the source after the rollback write. */
+  rollbackHash?: string;
+  rollbackPreviewLastModified?: number;
+  /**
+   * Whether rollback must re-preview / re-publish, decided from live status after the restore (so a
+   * forward preview/publish that ran but was never confirmed is still reverted). Undefined = not yet decided.
+   */
+  rollbackRepreview?: boolean;
+  rollbackRepublish?: boolean;
+  rollbackPreviewBaseline?: number;
+  rollbackPublishBaseline?: number;
+  /** Why a rollback stopped at the source (no re-preview / re-publish). */
+  rollbackNote?: string;
+  rollbackError?: string;
 }
 
-export const UPDATE_BUCKETS: ReadonlySet<ScanBucket> = new Set(['update-and-publish', 'update-source-only']);
+export const UPDATE_BUCKETS: ReadonlySet<ScanBucket> = new Set([
+  'update-and-publish',
+  'update-source-only',
+  'update-unpublished-changes',
+]);
 
 /**
  * Bucket for a document whose highlight row matched. A page that is live and has source or preview
- * activity after its last publish holds unpublished changes, which our publish would push live.
+ * activity after its last publish holds unpublished changes: it gets the edit, but publishing it
+ * would push the author's pending changes live, so it is never previewed or published.
  */
 export function bucketForMatch(status: PathStatus | undefined, daLastModified?: number): ScanBucket {
   if (!status?.ok) return 'skip-status-unknown';
@@ -50,7 +78,7 @@ export function bucketForMatch(status: PathStatus | undefined, daLastModified?: 
   if (published === undefined) return 'update-source-only';
   const source = status.sourceLastModified ?? daLastModified ?? 0;
   const preview = status.previewLastModified ?? 0;
-  if (source > published || preview > published) return 'skip-unpublished-changes';
+  if (source > published || preview > published) return 'update-unpublished-changes';
   return 'update-and-publish';
 }
 
@@ -61,12 +89,43 @@ export function productTypeFor(path: string, root: string): string {
   return root.split('/').filter(Boolean).pop() ?? '';
 }
 
-/** One-word final result for a document, used by the results table and the report. */
+/** True once this tool has written (or may have written) the document. */
+export function wroteDoc(r: DocRecord): boolean {
+  return r.writtenHash !== undefined || r.pendingHash !== undefined;
+}
+
+export function inRollback(r: DocRecord): boolean {
+  return r.rollbackStage !== undefined || r.rollbackError !== undefined;
+}
+
+/**
+ * Rollback re-previews / re-publishes only pages whose saved version was restored as-is, that were
+ * live-and-clean at scan time, and whose preview / publish moved after the scan (decided by the
+ * rollback planning step; assumed possible until then).
+ */
+export function rollbackNeedsPreview(r: DocRecord): boolean {
+  if (r.rollbackMethod !== 'version' || r.rollbackNote) return false;
+  return r.rollbackRepreview ?? r.bucket === 'update-and-publish';
+}
+
+export function rollbackNeedsPublish(r: DocRecord): boolean {
+  if (r.rollbackMethod !== 'version' || r.rollbackNote) return false;
+  return r.rollbackRepublish ?? r.bucket === 'update-and-publish';
+}
+
+/** Short result label for a document, used by the results table and the report. */
 export function resultFor(r: DocRecord): string {
+  if (inRollback(r)) {
+    if (r.rollbackError) return 'rollback failed';
+    if (r.rollbackStage === 'restored' && rollbackNeedsPreview(r)) return 'rolling back, pending preview';
+    if (r.rollbackStage === 'previewed' && rollbackNeedsPublish(r)) return 'rolling back, pending publish';
+    return r.rollbackNote ? 'rolled back (source only)' : 'rolled back';
+  }
   if (r.stage === 'skipped') return 'skipped';
   if (r.error) return `failed (${r.stage === 'scanned' ? 'update' : r.stage === 'updated' ? 'preview' : 'publish'})`;
   if (!UPDATE_BUCKETS.has(r.bucket)) return r.bucket;
-  if (r.stage === 'updated' && r.bucket === 'update-source-only') return 'updated (source only)';
+  if (r.stage === 'updated' && r.bucket === 'update-source-only') return 'updated (not live)';
+  if (r.stage === 'updated' && r.bucket === 'update-unpublished-changes') return 'updated (not published: had unpublished changes)';
   if (r.stage === 'scanned') return 'pending update';
   if (r.stage === 'updated') return 'updated, pending preview';
   if (r.stage === 'previewed') return 'previewed, pending publish';

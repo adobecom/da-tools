@@ -4,17 +4,17 @@ import ConfirmModal, { type ConfirmState } from './components/ConfirmModal';
 import { LogConsole, ProgressPanel, type LogLine, type ProgressState } from './components/Progress';
 import { ResultsTable, TypeSummary } from './components/Results';
 import { deleteRun, JournalWriter, listRuns, loadRun, saveRun, type RunMeta } from './engine/journal';
-import { UPDATE_BUCKETS, type DocRecord } from './engine/model';
+import { inRollback, UPDATE_BUCKETS, type DocRecord } from './engine/model';
 import { folderName, isDraftsRoot, normalizeRoot } from './engine/paths';
 import { download, qaUrls, toCsv, toJson } from './engine/report';
 import { PRINT_PDP_RETURNS_RULE as RULE } from './engine/rule';
 import {
-  applyUpdates, eligibleFor, previewUpdated, publishPreviewed, scan, verifyLive,
+  applyUpdates, eligibleFor, previewUpdated, publishPreviewed, rollback, scan, verifyLive,
   type EngineEvent, type PhaseContext,
 } from './engine/run';
 import { isAbortError } from './lib/http';
 
-type Phase = 'scan' | 'apply' | 'preview' | 'publish' | 'verify';
+type Phase = 'scan' | 'apply' | 'preview' | 'publish' | 'verify' | 'rollback';
 
 const DEFAULT_ROOT = '/adobecom/da-express-milo/drafts/maxn/document-generator';
 const MAX_LOG_LINES = 2000;
@@ -24,6 +24,7 @@ const PHASE_FNS: Record<Exclude<Phase, 'scan'>, (ctx: PhaseContext) => Promise<v
   preview: previewUpdated,
   publish: publishPreviewed,
   verify: verifyLive,
+  rollback,
 };
 
 async function requestWakeLock(): Promise<{ release: () => Promise<void> } | null> {
@@ -120,8 +121,9 @@ export default function App() {
     preview: eligibleFor('preview', records).length,
     publish: eligibleFor('publish', records).length,
     verify: eligibleFor('verify', records).length,
-    unfinished: records.filter((r) => r.stage === 'updated' && r.bucket === 'update-and-publish' || r.stage === 'previewed').length,
-    sourceOnlyUpdated: records.filter((r) => r.stage === 'updated' && r.bucket === 'update-source-only').length,
+    rollback: eligibleFor('rollback', records).length,
+    unfinished: records.filter((r) => !inRollback(r) && (r.stage === 'updated' && r.bucket === 'update-and-publish' || r.stage === 'previewed')).length,
+    sourceOnlyUpdated: records.filter((r) => r.stage === 'updated' && r.bucket !== 'update-and-publish' && !inRollback(r)).length,
   }), [records]);
 
   async function execute(phase: Phase, root: string) {
@@ -214,8 +216,8 @@ export default function App() {
         <>
           <p>For each document in <code>{run.root}</code>: save a DA version labeled "{RULE.versionLabel}", replace
             "{RULE.find}" with "{RULE.replace}", and read it back to verify.</p>
-          <p>{live.toLocaleString()} of them are live and will be previewed and published in the next steps. The other {(counts.apply - live).toLocaleString()} are not live and only get the source edit.</p>
-          <p>Nothing is published in this step.</p>
+          <p>{live.toLocaleString()} of them are live and will be previewed and published in the next steps. The other {(counts.apply - live).toLocaleString()} are either not live or have unpublished changes, so they only get the source edit and are never published by this tool.</p>
+          <p>Nothing is published in this step. You can undo it later with Roll back.</p>
         </>
       ),
       confirmLabel: 'Update documents',
@@ -229,15 +231,32 @@ export default function App() {
     setConfirm({
       title: `Publish ${counts.publish.toLocaleString()} pages?`,
       body: (
-        <>
-          <p>Each page is re-checked first; any page edited or re-previewed by someone else since our update is skipped.</p>
-          <p>Run pdp-render-checker on the QA URL list before publishing.</p>
-        </>
+        <p>Each page is re-checked first; any page edited, re-previewed, or unpublished by someone else since our update is skipped.</p>
       ),
       confirmLabel: 'Publish',
       danger: !isDraftsRoot(run.root),
       typeToConfirm: isDraftsRoot(run.root) ? undefined : folderName(run.root),
       onConfirm: () => { void start('publish'); },
+    });
+  }
+
+  function confirmRollback() {
+    if (!run) return;
+    setConfirm({
+      title: `Roll back ${counts.rollback.toLocaleString()} documents?`,
+      body: (
+        <>
+          <p>Puts "{RULE.find}" back in every document this run changed. A DA version labeled "{RULE.rollbackVersionLabel}" is saved first.</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>Unchanged since our update: the saved "{RULE.versionLabel}" version is restored, and pages this tool previewed or published are re-previewed and re-published so the live site reverts too.</li>
+            <li>Edited by someone after our update: only the copy change is reverted (their edits are kept), and the page is not republished.</li>
+          </ul>
+        </>
+      ),
+      confirmLabel: 'Roll back',
+      danger: true,
+      typeToConfirm: isDraftsRoot(run.root) ? undefined : folderName(run.root),
+      onConfirm: () => { void start('rollback'); },
     });
   }
 
@@ -266,12 +285,12 @@ export default function App() {
   const idleNote = (n: number) => {
     if (!run || n > 0) return undefined;
     const sourceOnly = counts.sourceOnlyUpdated
-      ? ` ${counts.sourceOnlyUpdated.toLocaleString()} updated documents weren't live before the run, so they only get the source edit.`
+      ? ` ${counts.sourceOnlyUpdated.toLocaleString()} updated documents weren't live or had unpublished changes, so they only get the source edit.`
       : '';
-    return `Nothing waiting here. Only pages that were live before the run are previewed and published.${sourceOnly}`;
+    return `Nothing waiting here. Only pages that were live with no unpublished changes are previewed and published.${sourceOnly}`;
   };
   const stamp = run ? `${folderName(run.root)}-${new Date(run.createdAt).toISOString().slice(0, 16).replace(/[:T]/g, '-')}` : '';
-  const qaRecords = records.filter((r) => r.stage === 'previewed' || r.stage === 'published');
+  const qaRecords = records.filter((r) => !inRollback(r) && (r.stage === 'previewed' || r.stage === 'published'));
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -341,7 +360,7 @@ export default function App() {
           <Step n={2} title="Update documents" desc="Saves a DA version, edits the copy, and verifies each document. Not published yet.">
             <Btn disabled={disabled || !run || counts.apply === 0} onClick={confirmApply}>Update {counts.apply.toLocaleString()}</Btn>
           </Step>
-          <Step n={3} title="Preview" desc="Bulk-previews updated live pages. Then QA them with pdp-render-checker." note={idleNote(counts.preview)}>
+          <Step n={3} title="Preview" desc="Bulk-previews updated live pages so you can check them before publishing." note={idleNote(counts.preview)}>
             <Btn disabled={disabled || counts.preview === 0} onClick={() => { void start('preview'); }}>Preview {counts.preview.toLocaleString()}</Btn>
             <Btn variant="secondary" disabled={qaRecords.length === 0} onClick={() => download(`qa-urls-${stamp}.txt`, qaUrls(qaRecords), 'text/plain')}>QA URLs</Btn>
           </Step>
@@ -350,6 +369,19 @@ export default function App() {
             <Btn variant="secondary" disabled={disabled || counts.verify === 0} onClick={() => { void start('verify'); }}>Verify live {counts.verify.toLocaleString()}</Btn>
           </Step>
         </section>
+
+        {run && (
+          <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-white p-4">
+            <div>
+              <div className="font-medium">Roll back</div>
+              <p className="mt-1 text-xs text-gray-600">
+                Available any time after Update. Restores the original copy in every document this run changed, and
+                re-publishes the pages it had published.
+              </p>
+            </div>
+            <Btn variant="danger" disabled={disabled || counts.rollback === 0} onClick={confirmRollback}>Roll back {counts.rollback.toLocaleString()}</Btn>
+          </section>
+        )}
 
         <ProgressPanel progress={progress} busy={busy !== null} />
         <LogConsole lines={logs} />

@@ -10,7 +10,8 @@ export function reportRows(records: DocRecord[]) {
     productType: r.productType,
     result: resultFor(r),
     scanBucket: r.bucket,
-    reason: r.skipReason ?? r.error ?? r.detail ?? '',
+    reason: r.rollbackError ?? r.rollbackNote ?? r.skipReason ?? r.error ?? r.detail ?? '',
+    rollback: r.rollbackStage ? `${r.rollbackStage} (${r.rollbackMethod})` : '',
     daLastModified: iso(r.daLastModified),
     sourceLastModified: iso(r.sourceLastModified),
     previewLastModified: iso(r.previewLastModified),
@@ -57,7 +58,7 @@ export function toJson(records: DocRecord[], root: string, rule: ReplaceRule): s
   }, null, 2);
 }
 
-/** URLs to hand to pdp-render-checker: stage adobe.com for /express pages, else aem.page. */
+/** URLs for spot-checking previewed/published pages: stage adobe.com for /express pages, else aem.page. */
 export function qaUrls(records: DocRecord[]): string {
   return records.map((r) => daPathToAdobeUrl(r.path, true) ?? daPathToPreviewUrl(r.path)).join('\n');
 }
