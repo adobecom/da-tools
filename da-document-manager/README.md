@@ -22,6 +22,14 @@ Select documents, then use **Update shipping copy** or **Rollback to previous ve
 
 Presets live in `src/lib/copyPresets.ts`; add a preset to get another Update / Rollback button pair.
 
+## Progress and activity log
+
+Every long operation (scan, status refresh, batch load, Preview / Publish / Unpublish / Delete, Update /
+Rollback) shows a progress bar with elapsed time and an estimate. Update / Rollback also show live counts
+(changed, already done, skipped for wording / missing copy, failed). The **Activity log** below the bar
+records each operation's start and outcome, plus one line per skipped or failed document with the
+reason; it can be downloaded or cleared.
+
 ## Stack
 
 React 19 + TypeScript + Vite 8 + Tailwind CSS v4 — the same setup as the other Vite tools in this repo.

@@ -2,17 +2,56 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { scanDocs, recheckStatuses, loadBatchMetadata, type ScanPhase } from '../lib/documentManager';
 import { checkDirectoryExists, daPathToLiveUrl, daPathToPreviewUrl, daPathToProdUrl } from '../api/daApi';
 import type { CrawlError } from '../api/crawl';
-import { useDaDocumentActions, type BulkProgressOp } from '../hooks/useDaDocumentActions';
+import { useDaDocumentActions, type BulkActionResult, type BulkProgressOp } from '../hooks/useDaDocumentActions';
+import { ActivityLog, ProgressBar, type LogLevel, type LogLine, type ProgressCounter } from './Activity';
 import ConfirmModal from './ConfirmModal';
 import DocumentManagerTable, { type SortField } from './DocumentManagerTable';
 import { ExternalLinkIcon } from './StatusCells';
 import type { DocRow } from '../types';
 import { COPY_PRESETS, type CopyPreset } from '../lib/copyPresets';
-import { runCopyBulk, copyResultLabel, type CopyDirection } from '../lib/copyEdit';
+import { runCopyBulk, copyResultLabel, type CopyDirection, type CopyResult } from '../lib/copyEdit';
 
 const ALL = 'all';
 const NO_BATCH = '(no batch)';
 const NO_COPY_RESULT = '(not run)';
+const MAX_LOG_LINES = 5000;
+const BULK_OP_LABEL: Record<BulkProgressOp, string> = {
+  previewing: 'Previewing',
+  publishing: 'Publishing',
+  unpublishing: 'Unpublishing',
+  deleting: 'Deleting',
+  'updating-copy': 'Updating copy',
+  'rolling-back': 'Rolling back',
+};
+
+/** Groups copy-edit results into the live counters shown under the progress bar. */
+function copyCounters(results: Iterable<CopyResult>, direction: CopyDirection): ProgressCounter[] {
+  let changed = 0; let unchanged = 0; let skipped = 0; let failed = 0;
+  for (const r of results) {
+    if (r.outcome === 'changed') changed += 1;
+    else if (r.outcome === 'unchanged') unchanged += 1;
+    else if (r.outcome === 'error') failed += 1;
+    else skipped += 1;
+  }
+  return [
+    { label: direction === 'update' ? 'Updated' : 'Rolled back', value: changed, tone: 'green' },
+    { label: direction === 'update' ? 'Already updated' : 'Already original', value: unchanged, tone: 'gray' },
+    { label: 'Skipped (wording / missing)', value: skipped, tone: 'amber' },
+    { label: 'Failed', value: failed, tone: 'red' },
+  ];
+}
+
+/** Draft / previewed / published / unknown tally of status updates, for the log. */
+function statusTally(rows: Iterable<{ stage?: string; statusUnknown?: boolean }>): string {
+  const c = { published: 0, previewed: 0, draft: 0, unknown: 0 };
+  for (const r of rows) {
+    if (r.statusUnknown) c.unknown += 1;
+    else if (r.stage === 'published') c.published += 1;
+    else if (r.stage === 'previewed') c.previewed += 1;
+    else c.draft += 1;
+  }
+  return `${c.published} published, ${c.previewed} previewed, ${c.draft} draft${c.unknown ? `, ${c.unknown} unknown` : ''}`;
+}
 // Pre-filled path + placeholder for the scan input; scanning stays manual (see rootPath below).
 const DEFAULT_ROOT_PATH = '/adobecom/da-express-milo/drafts/maxn';
 // Example paths shown in the info popover, each with a copy-to-clipboard button.
@@ -36,28 +75,6 @@ function statusOf(d: DocRow): StatusKey {
 /** A row's subDirectory (`/hoodie/red`, or `/` at root) as folder segments (root = []). */
 function toSegs(subDirectory: string): string[] {
   return subDirectory === '/' ? [] : subDirectory.slice(1).split('/');
-}
-
-function ScanProgressBar({ progress }: { progress: { phase: ScanPhase; done: number; total: number } }) {
-  const { phase, done, total } = progress;
-  const label = phase === 'discovering'
-    ? 'Discovering documents…'
-    : `Checking status… ${done} / ${total}`;
-  const pct = total > 0 ? Math.round((done / total) * 100) : null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between text-sm text-gray-500">
-        <span>{label}</span>
-        {pct !== null && <span className="tabular-nums">{pct}%</span>}
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
-        <div
-          className={`h-full rounded-full bg-blue-500 ${pct === null ? 'w-1/3 animate-pulse' : 'transition-[width] duration-200'}`}
-          style={pct !== null ? { width: `${pct}%` } : undefined}
-        />
-      </div>
-    </div>
-  );
 }
 
 /** An example path with a copy-to-clipboard button that briefly confirms the copy. */
@@ -115,6 +132,16 @@ export default function DocumentManagerView() {
   const [copyConfirm, setCopyConfirm] = useState<{ preset: CopyPreset; direction: CopyDirection } | null>(null);
   const [copyFilter, setCopyFilter] = useState<string>(ALL);
   const [copySummary, setCopySummary] = useState<{ title: string; counts: [string, number][] } | null>(null);
+  const [copyCountersState, setCopyCounters] = useState<ProgressCounter[] | null>(null);
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  function logMany(entries: { level: LogLevel; msg: string }[]) {
+    if (entries.length === 0) return;
+    const now = Date.now();
+    setLogs((prev) => [...prev, ...entries.map((e) => ({ ...e, time: now }))].slice(-MAX_LOG_LINES));
+  }
+  function log(level: LogLevel, msg: string) {
+    logMany([{ level, msg }]);
+  }
   const [busy, setBusy] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
   const [dismissedErrors, setDismissedErrors] = useState(false);
@@ -192,15 +219,19 @@ export default function DocumentManagerView() {
     setBatchProgress(null);
     setSubDirFilter(ALL);
     let stale = false;
+    const seen = new Map<string, { stage?: string; statusUnknown?: boolean }>();
+    log('info', `Scanning ${rootPath}`);
     void scanDocs(rootPath, {
       onDiscovered: (placeholders) => {
         if (stale) return;
+        log('info', `Found ${placeholders.length} documents; checking publish status`);
         setDocs(placeholders);
         setSelected(new Set());
         setDismissedErrors(false);
       },
       onStatuses: (updates) => {
         if (stale) return;
+        for (const u of updates) seen.set(u.path, u);
         const byPath = new Map(updates.map((u) => [u.path, u]));
         setDocs((prev) => prev.map((d) => {
           const u = byPath.get(d.path);
@@ -216,12 +247,15 @@ export default function DocumentManagerView() {
     }).then(
       ({ errors }) => {
         if (stale) return;
+        logMany(errors.map((e) => ({ level: 'error' as const, msg: `Could not read ${e.dirPath}: ${e.message}` })));
+        log('success', `Scan complete: ${statusTally(seen.values())}`);
         setCrawlErrors(errors);
         setHasScanned(true);
         setScanProgress(null);
       },
       (err: unknown) => {
         if (stale) return;
+        log('error', `Scan failed: ${err instanceof Error ? err.message : String(err)}`);
         setCrawlErrors([{ dirPath: rootPath, message: err instanceof Error ? err.message : String(err) }]);
         setHasScanned(true);
         setScanProgress(null);
@@ -236,11 +270,14 @@ export default function DocumentManagerView() {
   async function runStatusCheck(paths: string[]) {
     if (anyBusy || paths.length === 0) return;
     const myId = (opIdRef.current += 1);
+    const seen = new Map<string, { stage?: string; statusUnknown?: boolean }>();
+    log('info', `Checking publish status for ${paths.length} documents`);
     setScanProgress({ phase: 'checking', done: 0, total: paths.length });
     try {
       await recheckStatuses(paths, {
         onStatuses: (updates) => {
           if (opIdRef.current !== myId) return;
+          for (const u of updates) seen.set(u.path, u);
           const byPath = new Map(updates.map((u) => [u.path, u]));
           setDocs((prev) => prev.map((d) => {
             const u = byPath.get(d.path);
@@ -250,6 +287,7 @@ export default function DocumentManagerView() {
         onProgress: (phase, done, total) => { if (opIdRef.current === myId) setScanProgress({ phase, done, total }); },
         cancelled: () => opIdRef.current !== myId,
       });
+      if (opIdRef.current === myId) log('success', `Status check complete: ${statusTally(seen.values())}`);
     } finally {
       if (opIdRef.current === myId) setScanProgress(null);
     }
@@ -270,6 +308,7 @@ export default function DocumentManagerView() {
     const myId = (opIdRef.current += 1);
     setBatchDataState('loading');
     setBatchProgress({ done: 0, total: docs.length });
+    log('info', `Loading batch data for ${docs.length} documents`);
     await loadBatchMetadata(docs.map((d) => d.path), {
       onBatches: (updates) => {
         if (opIdRef.current !== myId) return;
@@ -285,6 +324,7 @@ export default function DocumentManagerView() {
       cancelled: () => opIdRef.current !== myId,
     });
     if (opIdRef.current !== myId) return;
+    log('success', 'Batch data loaded');
     setBatchDataState('loaded');
     setBatchProgress(null);
   }
@@ -456,25 +496,62 @@ export default function DocumentManagerView() {
   async function runCopyEdit(preset: CopyPreset, direction: CopyDirection, rows: DocRow[]) {
     const paths = rows.map((d) => d.path);
     const op = direction === 'update' ? 'updating-copy' : 'rolling-back';
+    const verb = direction === 'update' ? preset.updateLabel : preset.rollbackLabel;
+    const soFar: CopyResult[] = [];
     setCopySummary(null);
+    setCopyCounters(copyCounters([], direction));
     setBulkProgress({ op, done: 0, total: paths.length });
+    log('info', `${verb}: starting on ${paths.length} documents`);
     const results = await runCopyBulk(
       paths,
       preset,
       direction,
-      (batch) => setDocs((prev) => prev.map((d) => {
-        const r = batch.get(d.path);
-        if (!r) return d;
-        return r.outcome === 'changed' ? { ...d, copyResult: r, lastUpdated: Date.now() } : { ...d, copyResult: r };
-      })),
+      (batch) => {
+        const lines: { level: LogLevel; msg: string }[] = [];
+        for (const [path, r] of batch) {
+          soFar.push(r);
+          if (r.outcome === 'changed' || r.outcome === 'unchanged') continue;
+          lines.push({
+            level: r.outcome === 'error' ? 'error' : 'warn',
+            msg: `${copyResultLabel(r)}: ${path}${r.detail ? ` (${r.detail})` : ''}`,
+          });
+        }
+        logMany(lines);
+        setCopyCounters(copyCounters(soFar, direction));
+        setDocs((prev) => prev.map((d) => {
+          const r = batch.get(d.path);
+          if (!r) return d;
+          return r.outcome === 'changed' ? { ...d, copyResult: r, lastUpdated: Date.now() } : { ...d, copyResult: r };
+        }));
+      },
       (done, total) => setBulkProgress({ op, done, total }),
     );
+    setCopyCounters(null);
     const counts = new Map<string, number>();
     for (const r of results.values()) counts.set(copyResultLabel(r), (counts.get(copyResultLabel(r)) ?? 0) + 1);
+    const sortedCounts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
     setCopySummary({
-      title: `${direction === 'update' ? preset.updateLabel : preset.rollbackLabel}: ${results.size} document${results.size !== 1 ? 's' : ''}`,
-      counts: [...counts.entries()].sort((a, b) => b[1] - a[1]),
+      title: `${verb}: ${results.size} document${results.size !== 1 ? 's' : ''}`,
+      counts: sortedCounts,
     });
+    const failed = [...results.values()].filter((r) => r.outcome === 'error').length;
+    log(failed > 0 ? 'warn' : 'success', `${verb} finished: ${sortedCounts.map(([l, n]) => `${l} ${n}`).join(', ')}`);
+  }
+
+  /** Runs a Preview / Publish / Unpublish / Delete bulk action and logs its outcome. */
+  async function runBulkAction(verb: string, rows: DocRow[], run: () => Promise<BulkActionResult>) {
+    log('info', `${verb}: starting on ${rows.length} documents`);
+    try {
+      const res = await run();
+      if (res.fallbackReason) {
+        log('warn', `${verb}: bulk job failed (${res.fallbackReason}); retried one by one. Check the Status column for each row.`);
+        return;
+      }
+      logMany([...res.failed].map(([path, reason]) => ({ level: 'error' as const, msg: `${verb} failed: ${path} (${reason})` })));
+      log(res.failed.size > 0 ? 'warn' : 'success', `${verb} finished: ${res.succeeded} succeeded, ${res.failed.size} failed`);
+    } catch (err) {
+      log('error', `${verb} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const unknownCount = hasScanned && !scanning ? docs.filter((d) => d.statusUnknown).length : 0;
@@ -575,19 +652,26 @@ export default function DocumentManagerView() {
         )}
       </div>
 
-      {scanning && scanProgress && <ScanProgressBar progress={scanProgress} />}
-
-      {busy && bulkProgress && (
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-          </svg>
-          <span className="tabular-nums">
-            {{ previewing: 'Previewing', publishing: 'Publishing', unpublishing: 'Unpublishing', 'updating-copy': 'Updating copy', 'rolling-back': 'Rolling back' }[bulkProgress.op]}… {bulkProgress.done} / {bulkProgress.total}
-          </span>
-        </div>
+      {scanning && scanProgress && (
+        <ProgressBar
+          label={scanProgress.phase === 'discovering' ? 'Discovering documents' : 'Checking publish status'}
+          done={scanProgress.done}
+          total={scanProgress.phase === 'discovering' ? 0 : scanProgress.total}
+        />
       )}
+      {batchDataState === 'loading' && batchProgress && (
+        <ProgressBar label="Loading batch data" done={batchProgress.done} total={batchProgress.total} />
+      )}
+      {busy && bulkProgress && (
+        <ProgressBar
+          label={BULK_OP_LABEL[bulkProgress.op]}
+          done={bulkProgress.done}
+          total={bulkProgress.total}
+          counters={copyCountersState ?? undefined}
+        />
+      )}
+
+      <ActivityLog lines={logs} onClear={() => setLogs([])} />
 
       {copySummary && (
         <div className="flex items-start gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
@@ -673,11 +757,6 @@ export default function DocumentManagerView() {
               >
                 Load batch data
               </button>
-            )}
-            {batchDataState === 'loading' && batchProgress && (
-              <span className="text-gray-500 tabular-nums">
-                Loading batch data… {batchProgress.done} / {batchProgress.total}
-              </span>
             )}
             {batchDataState === 'loaded' && (
               <label className="flex items-center gap-1.5 text-gray-600">
@@ -832,11 +911,12 @@ export default function DocumentManagerView() {
       })()}
 
       {confirmOp && (() => {
+        const rows = selectedDocs;
         const cfg = {
-          preview: { verb: 'Preview', className: 'bg-indigo-600 hover:bg-indigo-700', run: () => actions.previewBulk(selectedDocs), body: 'This will (re)generate an aem.page preview for the following documents:' },
-          publish: { verb: 'Publish', className: 'bg-green-600 hover:bg-green-700', run: () => actions.publishBulk(selectedDocs), body: 'This will publish the following documents to production:' },
-          unpublish: { verb: 'Unpublish', className: 'bg-red-600 hover:bg-red-700', run: () => actions.unpublishBulk(selectedDocs), body: 'This will unpublish (remove from production) the following documents:' },
-          delete: { verb: 'Delete', className: 'bg-red-700 hover:bg-red-800', run: () => actions.deleteBulk(selectedDocs), body: 'This will permanently delete the following documents from DA:' },
+          preview: { verb: 'Preview', className: 'bg-indigo-600 hover:bg-indigo-700', run: () => runBulkAction('Preview', rows, () => actions.previewBulk(rows)), body: 'This will (re)generate an aem.page preview for the following documents:' },
+          publish: { verb: 'Publish', className: 'bg-green-600 hover:bg-green-700', run: () => runBulkAction('Publish', rows, () => actions.publishBulk(rows)), body: 'This will publish the following documents to production:' },
+          unpublish: { verb: 'Unpublish', className: 'bg-red-600 hover:bg-red-700', run: () => runBulkAction('Unpublish', rows, () => actions.unpublishBulk(rows)), body: 'This will unpublish (remove from production) the following documents:' },
+          delete: { verb: 'Delete', className: 'bg-red-700 hover:bg-red-800', run: () => runBulkAction('Delete', rows, () => actions.deleteBulk(rows)), body: 'This will permanently delete the following documents from DA:' },
         }[confirmOp];
         return (
           <ConfirmModal
