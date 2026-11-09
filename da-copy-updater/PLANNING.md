@@ -83,7 +83,7 @@ the length delta equals `replace.length - find.length`. If it fails → `error`,
    journal.
 
 ### 2. Apply & Preview (writes)
-For each `will-update-*` doc (concurrency 12, `fetchWithRetry`):
+For each `will-update-*` doc (write concurrency 16, `fetchWithRetry`):
 1. Re-read the source. If its hash changed since the scan, skip a live doc ("Edited after the scan");
    a not-live doc is re-classified and still updated if it matches.
 2. `createDocVersion(path, RULE.versionLabel)`.
@@ -158,7 +158,9 @@ Repo touch points: a "Copy Updater" card in the root `index.html`, rows in `READ
 
 These are estimates; measure them on the test folder.
 - Scan ≈ 15–25 min.
-- Apply ≈ 25–40 min (3 DA calls + 1 verify read per doc at concurrency 12).
+- Apply: measured 2.3 docs/s at write concurrency 8 on the drafts folder (388 docs in 171 s, ~3.5 s per
+  doc for read + version + write + verify), i.e. ~5.4 h for 44k. Raised to 16 (target ~2.7 h); confirm
+  with the drafts rollback/update test.
 - Preview and publish ≈ 1–2 h each (88 jobs of 500 at 3 concurrent).
 - Run it per product type to keep each session short.
 

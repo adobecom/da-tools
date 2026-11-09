@@ -28,7 +28,7 @@ export interface PhaseContext {
 }
 
 const READ_CONCURRENCY = 12;
-const WRITE_CONCURRENCY = 8;
+const WRITE_CONCURRENCY = 16;
 const LIVE_CHECK_CONCURRENCY = 16;
 
 const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
