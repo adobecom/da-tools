@@ -69,7 +69,9 @@ the length delta equals `replace.length - find.length`. If it fails → `error`,
 5. Derive per doc:
    - `wasLive` = `publishLastModified` present.
    - `unpublishedChanges` = `wasLive && (sourceLastModified > publishLastModified || previewLastModified > publishLastModified)`,
-     using the bulk-status timestamps (DA `/list` time as a fallback). Validate on the test run.
+     The bulk status job omits `sourceLastModified` for DA-backed sites (confirmed on the first test
+     scan), so the source time is DA's `/list` `lastModified`. Docs the job doesn't return are probed
+     on aem.live (404 = not live).
 6. Final bucket for each doc:
    - `will-update-and-publish`: `match` + live + no unpublished changes.
    - `will-update-source-only`: `match` + not live.
@@ -161,7 +163,7 @@ These are estimates; measure them on the test folder.
 
 ## Status
 
-Built: all phases, journal/resume, report, UI; 36 unit/flow tests pass. Next: the test run below.
+Built: all phases, journal/resume, report, UI; 38 unit/flow tests pass. Next: the test run below.
 
 ## Test plan
 

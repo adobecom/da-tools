@@ -231,33 +231,33 @@ async function runStatusChunk(org: string, repo: string, contentPaths: string[],
   if (!Array.isArray(resources)) throw new Error('status details: unrecognized shape');
   // Guards (kept from pdp-document-generator): if no resource carries a lifecycle timestamp, or most
   // requested paths are missing, the response shape changed. Throwing makes every doc "status
-  // unknown" (skipped) instead of silently reading live pages as not live. A resource without a
-  // source timestamp is likewise treated as unknown.
+  // unknown" (skipped) instead of silently reading live pages as not live. For DA-backed sites the
+  // job omits sourceLastModified even with select "edit"; callers fall back to DA's /list time.
   const out = new Map<string, PathStatus>();
   let recognized = false;
   for (const r of resources as StatusResource[]) {
     const path = r.path ?? r.webPath ?? r.resourcePath;
     if (!path) continue;
     const status: PathStatus = {
-      ok: false,
+      ok: true,
       sourceLastModified: toEpoch(r.sourceLastModified),
       previewLastModified: toEpoch(r.previewLastModified),
       publishLastModified: toEpoch(r.publishLastModified),
     };
     if (status.sourceLastModified || status.previewLastModified || status.publishLastModified) recognized = true;
-    status.ok = status.sourceLastModified !== undefined;
     out.set(path.replace(/\.md$/, ''), status);
   }
   if (resources.length > 0 && !recognized) throw new Error('status details: no lifecycle timestamps (unrecognized shape)');
-  const matched = contentPaths.filter((cp) => out.has(cp)).length;
-  if (matched < contentPaths.length * 0.5) throw new Error(`status details: path mismatch (${matched}/${contentPaths.length})`);
+  const requested = new Set(contentPaths);
+  const foreign = [...out.keys()].filter((k) => !requested.has(k)).length;
+  if (out.size > 0 && foreign > out.size * 0.5) throw new Error(`status details: path mismatch (${foreign}/${out.size} unrecognized)`);
   return out;
 }
 
 /**
  * Source/preview/publish timestamps for many DA paths via AEM bulk status jobs. The job can
- * silently drop paths whose source lookup fails, so missing paths are re-run in small batches; any
- * still missing come back as `{ ok: false }` (unknown) rather than being guessed.
+ * silently drop paths (including never-previewed ones), so missing paths are re-run in small
+ * batches, then probed on aem.live: a 404 there means not live. Anything else stays `{ ok: false }`.
  */
 export async function bulkStatus(daPaths: string[], signal?: AbortSignal, onProgress?: Progress): Promise<Map<string, PathStatus>> {
   const result = new Map<string, PathStatus>();
@@ -288,7 +288,16 @@ export async function bulkStatus(daPaths: string[], signal?: AbortSignal, onProg
       break;
     }
   }
-  for (const p of daPaths) if (!result.has(p)) result.set(p, { ok: false });
+  const missing = daPaths.filter((p) => !result.has(p));
+  await runPool(missing, async (p) => {
+    try {
+      const resp = await fetchWithRetry(daPathToLiveUrl(p), { method: 'HEAD', cache: 'no-store', signal });
+      result.set(p, { ok: resp.status === 404 });
+    } catch (err) {
+      if (err instanceof Error && (err.name === 'AuthError' || err.name === 'AbortError')) throw err;
+      result.set(p, { ok: false });
+    }
+  }, 8, signal);
   return result;
 }
 

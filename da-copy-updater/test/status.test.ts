@@ -32,12 +32,34 @@ describe('bulkStatus', () => {
     await expect(bulkStatus(PATHS)).rejects.toThrow(/unrecognized shape/);
   });
 
-  it('marks a resource without a source timestamp as unknown', async () => {
+  it('refuses paths in an unexpected format', async () => {
     stubJob([
-      { path: '/express/print/card/a', sourceLastModified: 'Wed, 30 Sep 2026 17:28:00 GMT' },
+      { path: '/main/express/print/card/a.md', previewLastModified: 'Wed, 30 Sep 2026 17:28:00 GMT' },
+      { path: '/main/express/print/card/b.md', previewLastModified: 'Wed, 30 Sep 2026 17:28:00 GMT' },
+    ]);
+    await expect(bulkStatus(PATHS)).rejects.toThrow(/path mismatch/);
+  });
+
+  it('accepts resources without a source timestamp (DA-backed sites omit it)', async () => {
+    stubJob([
+      { path: '/express/print/card/a', previewLastModified: 'Wed, 30 Sep 2026 17:28:00 GMT', publishLastModified: 'Thu, 01 Oct 2026 00:00:00 GMT' },
       { path: '/express/print/card/b', previewLastModified: 'Wed, 30 Sep 2026 17:28:00 GMT' },
     ]);
     const out = await bulkStatus(PATHS);
-    expect(out.get(PATHS[1])?.ok).toBe(false);
+    expect(out.get(PATHS[0])).toMatchObject({ ok: true, sourceLastModified: undefined, publishLastModified: Date.parse('2026-10-01T00:00:00Z') });
+    expect(out.get(PATHS[1])).toMatchObject({ ok: true, publishLastModified: undefined });
   });
+
+  it('probes aem.live for paths the job drops: 404 is not live, 200 stays unknown', async () => {
+    const PATHS3 = [...PATHS, '/adobecom/da-express-milo/express/print/card/c.html'];
+    stubJob([{ path: '/express/print/card/a', previewLastModified: 'Wed, 30 Sep 2026 17:28:00 GMT' }]);
+    const jobFetch = fetch as unknown as (url: string, init?: RequestInit) => Promise<Response>;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'HEAD') return new Response(null, { status: url.endsWith('/b') ? 404 : 200 });
+      return jobFetch(url, init);
+    }));
+    const out = await bulkStatus(PATHS3);
+    expect(out.get(PATHS3[1])).toEqual({ ok: true });
+    expect(out.get(PATHS3[2])).toEqual({ ok: false });
+  }, 20000);
 });
