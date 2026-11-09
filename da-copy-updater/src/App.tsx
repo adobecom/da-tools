@@ -35,13 +35,14 @@ async function requestWakeLock(): Promise<{ release: () => Promise<void> } | nul
   }
 }
 
-function Step({ n, title, desc, children }: { n: number; title: string; desc: string; children: React.ReactNode }) {
+function Step({ n, title, desc, note, children }: { n: number; title: string; desc: string; note?: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col rounded-lg border border-gray-200 bg-white p-4">
       <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">Step {n}</div>
       <div className="mt-1 font-medium">{title}</div>
       <p className="mt-1 flex-1 text-xs text-gray-600">{desc}</p>
       <div className="mt-3 flex flex-wrap gap-2">{children}</div>
+      {note && <p className="mt-2 text-xs text-gray-500">{note}</p>}
     </div>
   );
 }
@@ -120,6 +121,7 @@ export default function App() {
     publish: eligibleFor('publish', records).length,
     verify: eligibleFor('verify', records).length,
     unfinished: records.filter((r) => r.stage === 'updated' && r.bucket === 'update-and-publish' || r.stage === 'previewed').length,
+    sourceOnlyUpdated: records.filter((r) => r.stage === 'updated' && r.bucket === 'update-source-only').length,
   }), [records]);
 
   async function execute(phase: Phase, root: string) {
@@ -261,6 +263,13 @@ export default function App() {
   }
 
   const disabled = busy !== null || !hasToken;
+  const idleNote = (n: number) => {
+    if (!run || n > 0) return undefined;
+    const sourceOnly = counts.sourceOnlyUpdated
+      ? ` ${counts.sourceOnlyUpdated.toLocaleString()} updated documents weren't live before the run, so they only get the source edit.`
+      : '';
+    return `Nothing waiting here. Only pages that were live before the run are previewed and published.${sourceOnly}`;
+  };
   const stamp = run ? `${folderName(run.root)}-${new Date(run.createdAt).toISOString().slice(0, 16).replace(/[:T]/g, '-')}` : '';
   const qaRecords = records.filter((r) => r.stage === 'previewed' || r.stage === 'published');
 
@@ -332,11 +341,11 @@ export default function App() {
           <Step n={2} title="Update documents" desc="Saves a DA version, edits the copy, and verifies each document. Not published yet.">
             <Btn disabled={disabled || !run || counts.apply === 0} onClick={confirmApply}>Update {counts.apply.toLocaleString()}</Btn>
           </Step>
-          <Step n={3} title="Preview" desc="Bulk-previews updated live pages. Then QA them with pdp-render-checker.">
+          <Step n={3} title="Preview" desc="Bulk-previews updated live pages. Then QA them with pdp-render-checker." note={idleNote(counts.preview)}>
             <Btn disabled={disabled || counts.preview === 0} onClick={() => { void start('preview'); }}>Preview {counts.preview.toLocaleString()}</Btn>
             <Btn variant="secondary" disabled={qaRecords.length === 0} onClick={() => download(`qa-urls-${stamp}.txt`, qaUrls(qaRecords), 'text/plain')}>QA URLs</Btn>
           </Step>
-          <Step n={4} title="Publish" desc="Re-checks each page, publishes, then confirms the new copy on aem.live.">
+          <Step n={4} title="Publish" desc="Re-checks each page, publishes, then confirms the new copy on aem.live." note={idleNote(counts.publish + counts.verify)}>
             <Btn variant={run && !isDraftsRoot(run.root) ? 'danger' : 'primary'} disabled={disabled || counts.publish === 0} onClick={confirmPublish}>Publish {counts.publish.toLocaleString()}</Btn>
             <Btn variant="secondary" disabled={disabled || counts.verify === 0} onClick={() => { void start('verify'); }}>Verify live {counts.verify.toLocaleString()}</Btn>
           </Step>
