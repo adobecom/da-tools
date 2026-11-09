@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import type { DocRow } from '../types';
 import type { DaDocumentActions } from '../hooks/useDaDocumentActions';
 import { PreviewPill, PublishPill, UnpublishPill, DeleteButton, ExternalLinkIcon } from './StatusCells';
+import { copyResultLabel } from '../lib/copyEdit';
 
 export type SortField = 'path' | 'lastUpdated' | 'status';
 
@@ -25,9 +26,9 @@ const SORT_COLUMNS: { field: SortField; label: string }[] = [
 ];
 
 // Fixed column widths shared by the header and every row so a single CSS grid template keeps them
-// aligned while the body is virtualized. Order: checkbox, Path, Last updated, Status, Preview,
+// aligned while the body is virtualized. Order: checkbox, Path, Last updated, Status, Copy, Preview,
 // Publish, Unpublish, Delete. Deriving the template + total width from one array keeps them from drifting.
-const COLUMN_WIDTHS = [44, 560, 210, 120, 120, 120, 120, 90];
+const COLUMN_WIDTHS = [44, 560, 210, 120, 150, 120, 120, 120, 90];
 const GRID_TEMPLATE = COLUMN_WIDTHS.map((w) => `${w}px`).join(' ');
 const TOTAL_WIDTH = COLUMN_WIDTHS.reduce((a, b) => a + b, 0);
 
@@ -96,6 +97,7 @@ export default function DocumentManagerTable({
               </button>
             </div>
           ))}
+          <div className="px-3 py-2 font-medium text-gray-600">Copy</div>
           <div className="px-3 py-2 font-medium text-gray-600">Preview</div>
           <div className="px-3 py-2 font-medium text-gray-600">Publish</div>
           <div className="px-3 py-2 font-medium text-gray-600">Unpublish</div>
@@ -180,6 +182,9 @@ const DocumentRow = memo(function DocumentRow({
       <div className="px-3 py-2 truncate">
         <StatusLabel doc={doc} />
       </div>
+      <div className="px-3 py-2 truncate">
+        <CopyResultLabel doc={doc} />
+      </div>
       <div className="px-3 py-2">
         <PreviewPill result={doc} onPreview={() => actions.previewRow(doc)} />
       </div>
@@ -195,6 +200,15 @@ const DocumentRow = memo(function DocumentRow({
     </div>
   );
 });
+
+function CopyResultLabel({ doc }: { doc: DocRow }) {
+  const r = doc.copyResult;
+  if (!r) return <span className="text-gray-300">—</span>;
+  const tone = r.outcome === 'changed' || r.outcome === 'unchanged'
+    ? 'text-green-700'
+    : r.outcome === 'error' ? 'text-red-600' : 'text-amber-600';
+  return <span className={`${tone} font-medium`} title={r.detail}>{copyResultLabel(r)}</span>;
+}
 
 function StatusLabel({ doc }: { doc: DocRow }) {
   const { stage } = doc;

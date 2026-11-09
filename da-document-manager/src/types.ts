@@ -3,6 +3,8 @@
 // abstract counterpart to pdp-document-generator's product-specific `ManagedDoc` — no product id,
 // batch, title/description, or GMC state here.
 
+import type { CopyResult } from './lib/copyEdit';
+
 export type RowStage =
   | 'draft' // exists in DA source only (not previewed/published)
   | 'previewing'
@@ -36,4 +38,6 @@ export interface DocRow extends RowResult {
   /** `generated-batch` metadata (pdp-stamped ISO per bulk run). Populated only by the opt-in
    *  batch-load pass (a per-doc source fetch); `undefined` = not loaded / no batch. */
   generatedBatch?: string;
+  /** Result of the last bulk copy edit (Update / Revert) on this row, if any. */
+  copyResult?: CopyResult;
 }

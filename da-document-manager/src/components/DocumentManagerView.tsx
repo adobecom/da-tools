@@ -7,9 +7,12 @@ import ConfirmModal from './ConfirmModal';
 import DocumentManagerTable, { type SortField } from './DocumentManagerTable';
 import { ExternalLinkIcon } from './StatusCells';
 import type { DocRow } from '../types';
+import { COPY_PRESETS, type CopyPreset } from '../lib/copyPresets';
+import { applyRuleBulk, copyResultLabel, type CopyDirection } from '../lib/copyEdit';
 
 const ALL = 'all';
 const NO_BATCH = '(no batch)';
+const NO_COPY_RESULT = '(not run)';
 // Pre-filled path + placeholder for the scan input; scanning stays manual (see rootPath below).
 const DEFAULT_ROOT_PATH = '/adobecom/da-express-milo/drafts/maxn';
 // Example paths shown in the info popover, each with a copy-to-clipboard button.
@@ -109,6 +112,9 @@ export default function DocumentManagerView() {
   const [sortField, setSortField] = useState<SortField>('path');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [confirmOp, setConfirmOp] = useState<BulkConfirmOp | null>(null);
+  const [copyConfirm, setCopyConfirm] = useState<{ preset: CopyPreset; direction: CopyDirection } | null>(null);
+  const [copyFilter, setCopyFilter] = useState<string>(ALL);
+  const [copySummary, setCopySummary] = useState<{ title: string; counts: [string, number][] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
   const [dismissedErrors, setDismissedErrors] = useState(false);
@@ -315,9 +321,21 @@ export default function DocumentManagerView() {
       if (subDirFilter !== ALL && !(d.subDirectory === subDirFilter || d.subDirectory.startsWith(`${subDirFilter}/`))) return false;
       if (statusFilter !== ALL && statusOf(d) !== statusFilter) return false;
       if (batchFilter !== ALL && (d.generatedBatch || NO_BATCH) !== batchFilter) return false;
+      if (copyFilter !== ALL && (d.copyResult ? copyResultLabel(d.copyResult) : NO_COPY_RESULT) !== copyFilter) return false;
       return true;
     });
-  }, [docs, subDirFilter, statusFilter, batchFilter]);
+  }, [docs, subDirFilter, statusFilter, batchFilter, copyFilter]);
+
+  // Copy-result filter options with counts, so after a bulk edit the author can pick e.g. "Updated"
+  // and select-all → Preview / Publish exactly those documents.
+  const copyFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const d of docs) {
+      const label = d.copyResult ? copyResultLabel(d.copyResult) : NO_COPY_RESULT;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return counts.size > 1 || !counts.has(NO_COPY_RESULT) ? [...counts.entries()] : [];
+  }, [docs]);
 
   const sorted = useMemo(() => {
     const value = (d: DocRow): string => {
@@ -435,8 +453,32 @@ export default function DocumentManagerView() {
     }
   }
 
+  async function runCopyEdit(preset: CopyPreset, direction: CopyDirection, rows: DocRow[]) {
+    const rule = direction === 'update' ? preset.update : preset.revert;
+    const paths = rows.map((d) => d.path);
+    setCopySummary(null);
+    setBulkProgress({ op: direction === 'update' ? 'updating-copy' : 'reverting-copy', done: 0, total: paths.length });
+    const results = await applyRuleBulk(
+      paths,
+      rule,
+      direction,
+      (batch) => setDocs((prev) => prev.map((d) => {
+        const r = batch.get(d.path);
+        if (!r) return d;
+        return r.outcome === 'changed' ? { ...d, copyResult: r, lastUpdated: Date.now() } : { ...d, copyResult: r };
+      })),
+      (done, total) => setBulkProgress({ op: direction === 'update' ? 'updating-copy' : 'reverting-copy', done, total }),
+    );
+    const counts = new Map<string, number>();
+    for (const r of results.values()) counts.set(copyResultLabel(r), (counts.get(copyResultLabel(r)) ?? 0) + 1);
+    setCopySummary({
+      title: `${direction === 'update' ? preset.updateLabel : preset.revertLabel}: ${results.size} document${results.size !== 1 ? 's' : ''}`,
+      counts: [...counts.entries()].sort((a, b) => b[1] - a[1]),
+    });
+  }
+
   const unknownCount = hasScanned && !scanning ? docs.filter((d) => d.statusUnknown).length : 0;
-  const anyFilterActive = statusFilter !== ALL || batchFilter !== ALL || subDirFilter !== ALL;
+  const anyFilterActive = statusFilter !== ALL || batchFilter !== ALL || subDirFilter !== ALL || copyFilter !== ALL;
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 flex flex-col gap-4">
@@ -542,8 +584,23 @@ export default function DocumentManagerView() {
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
           <span className="tabular-nums">
-            {bulkProgress.op === 'previewing' ? 'Previewing' : bulkProgress.op === 'publishing' ? 'Publishing' : 'Unpublishing'}… {bulkProgress.done} / {bulkProgress.total}
+            {{ previewing: 'Previewing', publishing: 'Publishing', unpublishing: 'Unpublishing', 'updating-copy': 'Updating copy', 'reverting-copy': 'Reverting copy' }[bulkProgress.op]}… {bulkProgress.done} / {bulkProgress.total}
           </span>
+        </div>
+      )}
+
+      {copySummary && (
+        <div className="flex items-start gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700">
+          <div className="flex-1">
+            <p className="font-medium">{copySummary.title}</p>
+            <p className="mt-1 text-gray-600">
+              {copySummary.counts.map(([label, n]) => `${label}: ${n}`).join(' · ')}
+            </p>
+            <p className="mt-1 text-xs text-gray-500">Use the Copy filter to select a group (e.g. Updated), then Preview / Publish.</p>
+          </div>
+          <button type="button" onClick={() => setCopySummary(null)} className="text-gray-500 hover:text-gray-800 font-medium cursor-pointer">
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -638,6 +695,22 @@ export default function DocumentManagerView() {
               </label>
             )}
 
+            {copyFilterOptions.length > 0 && (
+              <label className="flex items-center gap-1.5 text-gray-600">
+                Copy
+                <select
+                  value={copyFilter}
+                  onChange={(e) => setCopyFilter(e.target.value)}
+                  className="h-8 px-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value={ALL}>All</option>
+                  {copyFilterOptions.map(([label, n]) => (
+                    <option key={label} value={label}>{label} ({n})</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             {anyFilterActive && (
               <span className="text-gray-500">{filtered.length} shown</span>
             )}
@@ -695,6 +768,13 @@ export default function DocumentManagerView() {
                 <BulkButton label="Publish" onClick={() => setConfirmOp('publish')} disabled={baseDisabled} className="text-green-700 hover:bg-green-50 border-green-200" />
                 <BulkButton label="Unpublish" onClick={() => setConfirmOp('unpublish')} disabled={baseDisabled || !allPublished} className="text-red-700 hover:bg-red-50 border-red-200" />
                 <BulkButton label="Delete" onClick={() => setConfirmOp('delete')} disabled={baseDisabled} className="text-red-700 hover:bg-red-50 border-red-200" />
+                {COPY_PRESETS.map((preset) => (
+                  <Fragment key={preset.id}>
+                    <span className="mx-1 h-5 border-l border-gray-300" aria-hidden />
+                    <BulkButton label={preset.updateLabel} onClick={() => setCopyConfirm({ preset, direction: 'update' })} disabled={baseDisabled} className="text-blue-700 hover:bg-blue-50 border-blue-200" />
+                    <BulkButton label={preset.revertLabel} onClick={() => setCopyConfirm({ preset, direction: 'revert' })} disabled={baseDisabled} className="text-gray-700 hover:bg-gray-100 border-gray-300" />
+                  </Fragment>
+                ))}
               </div>
             );
           })()}
@@ -712,6 +792,35 @@ export default function DocumentManagerView() {
           />
         </>
       )}
+
+      {copyConfirm && (() => {
+        const { preset, direction } = copyConfirm;
+        const rule = direction === 'update' ? preset.update : preset.revert;
+        const verb = direction === 'update' ? preset.updateLabel : preset.revertLabel;
+        return (
+          <ConfirmModal
+            title={`${verb} in ${selectedDocs.length} document${selectedDocs.length !== 1 ? 's' : ''}?`}
+            confirmLabel={verb}
+            confirmClassName="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl cursor-pointer transition-colors"
+            onCancel={() => setCopyConfirm(null)}
+            onConfirm={() => {
+              const rows = selectedDocs;
+              setCopyConfirm(null);
+              void withBusy(() => runCopyEdit(preset, direction, rows));
+            }}
+          >
+            <p className="text-sm text-gray-600">
+              In the <code>{rule.blockClass}</code> block, replaces <code>{rule.find}</code> with <code>{rule.replace}</code>.
+              Only an exact match is edited; other wording is reported and left alone. A DA version labeled
+              {' '}<code>{rule.versionLabel}</code> is saved before each change.
+            </p>
+            <p className="text-sm text-gray-600">Nothing is previewed or published. Do that afterwards with the Preview / Publish buttons.</p>
+            <ul className="text-xs font-mono text-gray-700 max-h-64 overflow-y-auto border border-gray-100 rounded-lg p-3 flex flex-col gap-1">
+              {selectedDocs.map((d) => <li key={d.path} className="whitespace-nowrap">{d.path}</li>)}
+            </ul>
+          </ConfirmModal>
+        );
+      })()}
 
       {confirmOp && (() => {
         const cfg = {

@@ -66,6 +66,14 @@ mid-scan. Replacement (implemented first in the pdp scan fix — see the approve
   preview tier is often auth-gated). Basis: `shared/da-api.js` `fetchPublishedPaths`.
 - **Robustness:** honor `Retry-After` in job polling; "recheck unknowns only" instead of full rescan.
 
+### D7 — Bulk copy edits as presets
+Content editing enters as **find & replace presets** (`src/lib/copyPresets.ts`), not a product-specific
+feature: each preset is a block-scoped exact-text rule plus its reverse, rendered as an Update / Revert
+button pair in the bulk bar. First preset: MWPW-214582 shipping copy (logic ported from
+`da-copy-updater`). Per-row results feed a **Copy** column + filter so authors can select the updated set
+and use the normal Preview / Publish actions. Deliberately no unpublished-changes guard or journal: the
+edit is idempotent (re-run to resume), and pushing pending author edits live was accepted for this job.
+
 ## Reference — DA / AEM Admin APIs (established during planning)
 
 ### Document list & content — DA Admin API, base `https://admin.da.live`

@@ -4,10 +4,19 @@ A DA (Document Authoring) tool for managing documents in a DA folder — point i
 documents it contains, and preview / publish / unpublish / delete them. Modeled on the **Document
 Manager** tab of [pdp-document-generator](../pdp-document-generator/).
 
-> **Status: scaffold.** This is currently a Vite + React "hello world" that renders and performs the DA
-> auth-token handshake. The document-management features are not built yet.
+## Bulk copy edits
 
-Opens in DA at: **https://da.live/app/adobecom/da-tools/da-document-manager/dist/index**
+Select documents, then use **Update shipping copy** / **Revert shipping copy** in the bulk bar
+(MWPW-214582: in the `highlight` block, "Free shipping and returns" ↔ "Easy 30-day returns").
+
+- Only an exact single match is edited; other wording is reported in the **Copy** column and left alone.
+- A DA version (`Before MWPW-214582 copy update` / `… copy revert`) is saved before each change, and
+  each document is read back to verify. Re-running is safe: finished documents report "Already updated".
+- Nothing is previewed or published. Afterwards, use the **Copy** filter (e.g. "Updated"), select all,
+  and Preview / Publish as usual.
+- Revert swaps the text back, keeping any other edits made since.
+
+Presets live in `src/lib/copyPresets.ts`; add a preset to get another Update / Revert button pair.
 
 ## Stack
 
@@ -21,6 +30,7 @@ The DA auth token is obtained in `src/main.tsx` (from the da.live Nx Shell SDK w
 npm install
 echo "VITE_DA_TOKEN=your_token_here" > .env.local   # only needed for DA calls when run outside da.live
 npm run dev      # port 3000
+npm test         # Vitest: copy-edit logic
 npm run build    # compiles to ./dist (commit the result)
 ```
 

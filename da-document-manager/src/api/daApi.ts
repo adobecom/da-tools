@@ -116,6 +116,32 @@ export async function cat(filePath: string): Promise<string> {
   return resp.text();
 }
 
+export async function writeSource(filePath: string, html: string): Promise<void> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
+  const body = new FormData();
+  body.append('data', new Blob([html], { type: 'text/html' }));
+  const resp = await fetchWithRetry(`${DA_API}/source${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${t}` },
+    body,
+  });
+  if (!resp.ok) throw new Error(`write ${resp.status}`);
+}
+
+export async function createVersion(filePath: string, label: string): Promise<void> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
+  const resp = await fetchWithRetry(`${DA_API}/versionsource${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label }),
+  });
+  if (!resp.ok) throw new Error(`version ${resp.status}`);
+}
+
 export async function triggerPreview(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
   const resp = await fetchWithRetry(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
