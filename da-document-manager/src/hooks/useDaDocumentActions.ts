@@ -16,7 +16,7 @@ import { runBatch } from '../lib/concurrency';
 import type { RowResult, RowStage } from '../types';
 
 /** Which bulk operation is reporting progress (drives an n/m counter in the view). */
-export type BulkProgressOp = 'previewing' | 'publishing' | 'unpublishing' | 'updating-copy' | 'reverting-copy';
+export type BulkProgressOp = 'previewing' | 'publishing' | 'unpublishing' | 'updating-copy' | 'rolling-back';
 
 export interface DaDocumentActionsOptions<T extends RowResult> {
   /**

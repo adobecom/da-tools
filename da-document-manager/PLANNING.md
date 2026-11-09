@@ -68,11 +68,13 @@ mid-scan. Replacement (implemented first in the pdp scan fix — see the approve
 
 ### D7 — Bulk copy edits as presets
 Content editing enters as **find & replace presets** (`src/lib/copyPresets.ts`), not a product-specific
-feature: each preset is a block-scoped exact-text rule plus its reverse, rendered as an Update / Revert
-button pair in the bulk bar. First preset: MWPW-214582 shipping copy (logic ported from
-`da-copy-updater`). Per-row results feed a **Copy** column + filter so authors can select the updated set
-and use the normal Preview / Publish actions. Deliberately no unpublished-changes guard or journal: the
-edit is idempotent (re-run to resume), and pushing pending author edits live was accepted for this job.
+feature: each preset is a block-scoped exact-text rule, rendered as an **Update** / **Rollback to previous
+version** button pair in the bulk bar. Update saves a labeled DA version right before each write; Rollback
+restores that saved version (whole document; a pre-rollback version is saved first). First preset:
+MWPW-214582 shipping copy (logic ported from `da-copy-updater`). Per-row results feed a **Copy** column +
+filter so authors can select the changed set and use the normal Preview / Publish actions. Deliberately no
+unpublished-changes guard or journal: Update is idempotent (re-run to resume), and pushing pending author
+edits live was accepted for this job.
 
 ## Reference — DA / AEM Admin APIs (established during planning)
 

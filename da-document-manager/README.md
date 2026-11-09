@@ -6,17 +6,21 @@ Manager** tab of [pdp-document-generator](../pdp-document-generator/).
 
 ## Bulk copy edits
 
-Select documents, then use **Update shipping copy** / **Revert shipping copy** in the bulk bar
-(MWPW-214582: in the `highlight` block, "Free shipping and returns" ↔ "Easy 30-day returns").
+Select documents, then use **Update shipping copy** or **Rollback to previous version** in the bulk bar
+(MWPW-214582: in the `highlight` block, "Free shipping and returns" → "Easy 30-day returns").
 
-- Only an exact single match is edited; other wording is reported in the **Copy** column and left alone.
-- A DA version (`Before MWPW-214582 copy update` / `… copy revert`) is saved before each change, and
-  each document is read back to verify. Re-running is safe: finished documents report "Already updated".
-- Nothing is previewed or published. Afterwards, use the **Copy** filter (e.g. "Updated"), select all,
-  and Preview / Publish as usual.
-- Revert swaps the text back, keeping any other edits made since.
+- **Update shipping copy**: for each document with exactly one matching heading, saves a DA version
+  labeled `Before MWPW-214582 copy update` (the pre-edit content), writes the edit, and reads it back to
+  verify. Other wording is reported in the **Copy** column and left alone (no version, no write).
+  Re-running is safe: finished documents report "Already updated".
+- **Rollback to previous version**: restores each document to its most recent
+  `Before MWPW-214582 copy update` version, replacing the whole document (edits made after the update are
+  discarded). A `Before MWPW-214582 rollback` version is saved first, so a rollback can itself be undone
+  from DA history. Documents that already have the original copy are left alone.
+- Neither button previews or publishes. Afterwards, set the **Copy** filter (e.g. "Updated" or
+  "Rolled back") and the **Status** filter (e.g. "Published"), select all, then Preview / Publish.
 
-Presets live in `src/lib/copyPresets.ts`; add a preset to get another Update / Revert button pair.
+Presets live in `src/lib/copyPresets.ts`; add a preset to get another Update / Rollback button pair.
 
 ## Stack
 

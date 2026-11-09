@@ -8,7 +8,7 @@ import DocumentManagerTable, { type SortField } from './DocumentManagerTable';
 import { ExternalLinkIcon } from './StatusCells';
 import type { DocRow } from '../types';
 import { COPY_PRESETS, type CopyPreset } from '../lib/copyPresets';
-import { applyRuleBulk, copyResultLabel, type CopyDirection } from '../lib/copyEdit';
+import { runCopyBulk, copyResultLabel, type CopyDirection } from '../lib/copyEdit';
 
 const ALL = 'all';
 const NO_BATCH = '(no batch)';
@@ -454,25 +454,25 @@ export default function DocumentManagerView() {
   }
 
   async function runCopyEdit(preset: CopyPreset, direction: CopyDirection, rows: DocRow[]) {
-    const rule = direction === 'update' ? preset.update : preset.revert;
     const paths = rows.map((d) => d.path);
+    const op = direction === 'update' ? 'updating-copy' : 'rolling-back';
     setCopySummary(null);
-    setBulkProgress({ op: direction === 'update' ? 'updating-copy' : 'reverting-copy', done: 0, total: paths.length });
-    const results = await applyRuleBulk(
+    setBulkProgress({ op, done: 0, total: paths.length });
+    const results = await runCopyBulk(
       paths,
-      rule,
+      preset,
       direction,
       (batch) => setDocs((prev) => prev.map((d) => {
         const r = batch.get(d.path);
         if (!r) return d;
         return r.outcome === 'changed' ? { ...d, copyResult: r, lastUpdated: Date.now() } : { ...d, copyResult: r };
       })),
-      (done, total) => setBulkProgress({ op: direction === 'update' ? 'updating-copy' : 'reverting-copy', done, total }),
+      (done, total) => setBulkProgress({ op, done, total }),
     );
     const counts = new Map<string, number>();
     for (const r of results.values()) counts.set(copyResultLabel(r), (counts.get(copyResultLabel(r)) ?? 0) + 1);
     setCopySummary({
-      title: `${direction === 'update' ? preset.updateLabel : preset.revertLabel}: ${results.size} document${results.size !== 1 ? 's' : ''}`,
+      title: `${direction === 'update' ? preset.updateLabel : preset.rollbackLabel}: ${results.size} document${results.size !== 1 ? 's' : ''}`,
       counts: [...counts.entries()].sort((a, b) => b[1] - a[1]),
     });
   }
@@ -584,7 +584,7 @@ export default function DocumentManagerView() {
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
           <span className="tabular-nums">
-            {{ previewing: 'Previewing', publishing: 'Publishing', unpublishing: 'Unpublishing', 'updating-copy': 'Updating copy', 'reverting-copy': 'Reverting copy' }[bulkProgress.op]}… {bulkProgress.done} / {bulkProgress.total}
+            {{ previewing: 'Previewing', publishing: 'Publishing', unpublishing: 'Unpublishing', 'updating-copy': 'Updating copy', 'rolling-back': 'Rolling back' }[bulkProgress.op]}… {bulkProgress.done} / {bulkProgress.total}
           </span>
         </div>
       )}
@@ -596,7 +596,7 @@ export default function DocumentManagerView() {
             <p className="mt-1 text-gray-600">
               {copySummary.counts.map(([label, n]) => `${label}: ${n}`).join(' · ')}
             </p>
-            <p className="mt-1 text-xs text-gray-500">Use the Copy filter to select a group (e.g. Updated), then Preview / Publish.</p>
+            <p className="mt-1 text-xs text-gray-500">Nothing was previewed or published. Use the Copy filter (e.g. Updated / Rolled back) together with the Status filter, select all, then Preview / Publish.</p>
           </div>
           <button type="button" onClick={() => setCopySummary(null)} className="text-gray-500 hover:text-gray-800 font-medium cursor-pointer">
             Dismiss
@@ -772,7 +772,7 @@ export default function DocumentManagerView() {
                   <Fragment key={preset.id}>
                     <span className="mx-1 h-5 border-l border-gray-300" aria-hidden />
                     <BulkButton label={preset.updateLabel} onClick={() => setCopyConfirm({ preset, direction: 'update' })} disabled={baseDisabled} className="text-blue-700 hover:bg-blue-50 border-blue-200" />
-                    <BulkButton label={preset.revertLabel} onClick={() => setCopyConfirm({ preset, direction: 'revert' })} disabled={baseDisabled} className="text-gray-700 hover:bg-gray-100 border-gray-300" />
+                    <BulkButton label={preset.rollbackLabel} onClick={() => setCopyConfirm({ preset, direction: 'rollback' })} disabled={baseDisabled} className="text-gray-700 hover:bg-gray-100 border-gray-300" />
                   </Fragment>
                 ))}
               </div>
@@ -795,13 +795,13 @@ export default function DocumentManagerView() {
 
       {copyConfirm && (() => {
         const { preset, direction } = copyConfirm;
-        const rule = direction === 'update' ? preset.update : preset.revert;
-        const verb = direction === 'update' ? preset.updateLabel : preset.revertLabel;
+        const rule = preset.update;
+        const verb = direction === 'update' ? preset.updateLabel : preset.rollbackLabel;
         return (
           <ConfirmModal
-            title={`${verb} in ${selectedDocs.length} document${selectedDocs.length !== 1 ? 's' : ''}?`}
+            title={`${verb}: ${selectedDocs.length} document${selectedDocs.length !== 1 ? 's' : ''}?`}
             confirmLabel={verb}
-            confirmClassName="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl cursor-pointer transition-colors"
+            confirmClassName={`px-4 py-2 ${direction === 'update' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'} text-white text-sm font-medium rounded-xl cursor-pointer transition-colors`}
             onCancel={() => setCopyConfirm(null)}
             onConfirm={() => {
               const rows = selectedDocs;
@@ -809,11 +809,20 @@ export default function DocumentManagerView() {
               void withBusy(() => runCopyEdit(preset, direction, rows));
             }}
           >
-            <p className="text-sm text-gray-600">
-              In the <code>{rule.blockClass}</code> block, replaces <code>{rule.find}</code> with <code>{rule.replace}</code>.
-              Only an exact match is edited; other wording is reported and left alone. A DA version labeled
-              {' '}<code>{rule.versionLabel}</code> is saved before each change.
-            </p>
+            {direction === 'update' ? (
+              <p className="text-sm text-gray-600">
+                In the <code>{rule.blockClass}</code> block, replaces <code>{rule.find}</code> with <code>{rule.replace}</code>.
+                Only an exact match is edited; other wording is reported and left alone. Right before each change,
+                a DA version labeled <code>{rule.versionLabel}</code> is saved.
+              </p>
+            ) : (
+              <p className="text-sm text-gray-600">
+                Restores each document to its saved <code>{rule.versionLabel}</code> version, replacing the whole
+                document. Any edits made after the update are discarded. A <code>{preset.rollbackVersionLabel}</code>{' '}
+                version is saved first, so the rollback can be undone from DA history. Documents that already have
+                the original copy are left alone.
+              </p>
+            )}
             <p className="text-sm text-gray-600">Nothing is previewed or published. Do that afterwards with the Preview / Publish buttons.</p>
             <ul className="text-xs font-mono text-gray-700 max-h-64 overflow-y-auto border border-gray-100 rounded-lg p-3 flex flex-col gap-1">
               {selectedDocs.map((d) => <li key={d.path} className="whitespace-nowrap">{d.path}</li>)}
