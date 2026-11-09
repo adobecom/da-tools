@@ -7,18 +7,27 @@ Manager** tab of [pdp-document-generator](../pdp-document-generator/).
 ## Bulk copy edits
 
 Select documents, then use **Update shipping copy** or **Rollback to previous version** in the bulk bar
-(MWPW-214582: in the `highlight` block, "Free shipping and returns" → "Easy 30-day returns").
+(MWPW-214582).
 
-- **Update shipping copy**: for each document with exactly one matching heading, saves a DA version
-  labeled `Before MWPW-214582 copy update` (the pre-edit content), writes the edit, and reads it back to
-  verify. Other wording is reported in the **Copy** column and left alone (no version, no write).
-  Re-running is safe: finished documents report "Already updated".
-- **Rollback to previous version**: restores each document to its most recent
-  `Before MWPW-214582 copy update` version, replacing the whole document (edits made after the update are
-  discarded). A `Before MWPW-214582 rollback` version is saved first, so a rollback can itself be undone
-  from DA history. Documents that already have the original copy are left alone.
-- Neither button previews or publishes. Afterwards, set the **Copy** filter (e.g. "Updated" or
-  "Rolled back") and the **Status** filter (e.g. "Published"), select all, then Preview / Publish.
+- **Update shipping copy** has two modes:
+  - *Text (default)*: in the `highlight` block, replaces "Free shipping and returns" with
+    "Easy 30-day returns". Only an exact single match is edited.
+  - *Use fragment instead* (checkbox): replaces the whole `highlight` block with a `fragment` block linking
+    to `/express/fragments/print-product-detail/highlight-ribbon`, so future copy changes are one edit to
+    the fragment. Only a block named exactly `highlight` that contains the shipping row is replaced (a block
+    that merely uses `highlight` as a variant, like `steps highlight`, is never touched). The confirmation
+    checks the fragment is published; publish it before publishing swapped pages.
+
+  Either way, a labeled DA version (`Before MWPW-214582 copy update` / `… fragment swap`) is saved right
+  before each change and the document is read back to verify. Anything else is reported in the **Copy**
+  column and left alone. Re-running is safe.
+- **Rollback to previous version** restores the version saved right before the most recent update (either
+  mode), replacing the whole document; edits made after that update are discarded. A
+  `Before MWPW-214582 rollback` version is saved first. Running it again steps back one more update.
+- Neither button previews or publishes. Afterwards, set the **Copy** and **Status** filters, select all,
+  then Preview / Publish.
+- **Download report** (CSV or JSON) exports the rows currently shown, with each document's status, copy
+  result, details, and links; the JSON adds counts by copy result, status, and folder.
 
 Presets live in `src/lib/copyPresets.ts`; add a preset to get another Update / Rollback button pair.
 
@@ -42,7 +51,7 @@ The DA auth token is obtained in `src/main.tsx` (from the da.live Nx Shell SDK w
 npm install
 echo "VITE_DA_TOKEN=your_token_here" > .env.local   # only needed for DA calls when run outside da.live
 npm run dev      # port 3000
-npm test         # Vitest: copy-edit logic
+npm test         # Vitest: copy edits, fragment swap, report, activity UI
 npm run build    # compiles to ./dist (commit the result)
 ```
 

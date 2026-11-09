@@ -15,14 +15,14 @@ vi.mock('../src/api/daApi', () => ({
     store.set(p, html);
   },
   createVersion: async (p: string, label: string) => { versions.push({ path: p, label, html: store.get(p)!, t: ++clock }); },
-  findVersionUrl: async (p: string, label: string) => {
-    const v = versions.filter((x) => x.path === p && x.label === label).sort((a, b) => b.t - a.t)[0];
-    return v ? `/versionsource/${versions.indexOf(v)}` : null;
-  },
+  listVersions: async (p: string) => versions
+    .map((v, i) => ({ ...v, i }))
+    .filter((v) => v.path === p)
+    .map((v) => ({ label: v.label, timestamp: v.t, url: `/versionsource/${v.i}` })),
   readVersion: async (url: string) => versions[Number(url.split('/').pop())].html,
 }));
 
-const { applyUpdate, applyRollback, runCopyBulk, copyResultLabel } = await import('../src/lib/copyEdit');
+const { applyUpdate, applyRollback, applyFragmentSwap, runCopyBulk, copyResultLabel } = await import('../src/lib/copyEdit');
 const { SHIPPING_COPY } = await import('../src/lib/copyPresets');
 
 beforeEach(() => { store.clear(); versions.length = 0; failWrite = false; });
@@ -58,7 +58,7 @@ describe('Rollback to previous version', () => {
     const edited = store.get('/a.html')!.replace('Yellow Technology', 'Later edit');
     store.set('/a.html', edited);
 
-    expect(await applyRollback('/a.html', SHIPPING_COPY)).toEqual({ outcome: 'changed' });
+    expect(await applyRollback('/a.html', SHIPPING_COPY)).toEqual({ outcome: 'changed', detail: 'Restored "Before MWPW-214582 copy update" version' });
     expect(store.get('/a.html')).toBe(base);
     expect(versions.at(-1)).toMatchObject({ label: 'Before MWPW-214582 rollback', html: edited });
   });
@@ -80,19 +80,77 @@ describe('bulk', () => {
     store.set('/a.html', base);
     store.set('/b.html', base.replace('class="highlight"', 'class="other"'));
     const seen = new Map();
-    const results = await runCopyBulk(['/a.html', '/b.html'], SHIPPING_COPY, 'update', (batch) => {
+    const results = await runCopyBulk(['/a.html', '/b.html'], SHIPPING_COPY, 'update', 'text', (batch) => {
       for (const [k, v] of batch) seen.set(k, v);
     }, () => {});
     expect(seen.size).toBe(2);
     expect(copyResultLabel(results.get('/a.html')!)).toBe('Updated');
     expect(copyResultLabel(results.get('/b.html')!)).toBe('No matching block');
 
-    const rolled = await runCopyBulk(['/a.html'], SHIPPING_COPY, 'rollback', () => {}, () => {});
+    const rolled = await runCopyBulk(['/a.html'], SHIPPING_COPY, 'rollback', 'text', () => {}, () => {});
     expect(copyResultLabel(rolled.get('/a.html')!)).toBe('Rolled back');
 
     failWrite = true;
     store.set('/d.html', base);
-    const failed = await runCopyBulk(['/d.html'], SHIPPING_COPY, 'update', () => {}, () => {});
+    const failed = await runCopyBulk(['/d.html'], SHIPPING_COPY, 'update', 'text', () => {}, () => {});
     expect(failed.get('/d.html')).toMatchObject({ outcome: 'error', detail: 'write 500' });
+  });
+});
+
+describe('fragment swap', () => {
+  const swap = SHIPPING_COPY.fragment!;
+  const fragmentBlock = `<div class="fragment"><div><div><p><a href="${swap.fragmentUrl}">${swap.fragmentUrl}</a></p></div></div></div>`;
+  const highlightStart = base.indexOf('<div class="highlight">');
+  const highlightEnd = base.indexOf('<div class="faqv2') - '</div><div>'.length;
+  const expected = base.slice(0, highlightStart) + fragmentBlock + base.slice(highlightEnd);
+
+  it('replaces exactly the highlight block with a fragment block, nothing else', async () => {
+    store.set('/a.html', base);
+    expect(await applyFragmentSwap('/a.html', SHIPPING_COPY)).toEqual({ outcome: 'changed' });
+    expect(store.get('/a.html')).toBe(expected);
+    expect(store.get('/a.html')).not.toContain('class="highlight"');
+    expect(store.get('/a.html')).toContain('class="faqv2 expandable"');
+    expect(versions).toMatchObject([{ label: 'Before MWPW-214582 fragment swap', html: base }]);
+  });
+
+  it('also swaps a page that already has the text update', async () => {
+    store.set('/a.html', base);
+    await applyUpdate('/a.html', SHIPPING_COPY);
+    expect((await applyFragmentSwap('/a.html', SHIPPING_COPY)).outcome).toBe('changed');
+  });
+
+  it('is safe to re-run', async () => {
+    store.set('/a.html', base);
+    await applyFragmentSwap('/a.html', SHIPPING_COPY);
+    const r = await runCopyBulk(['/a.html'], SHIPPING_COPY, 'update', 'fragment', () => {}, () => {});
+    expect(copyResultLabel(r.get('/a.html')!)).toBe('Already uses fragment');
+    expect(versions).toHaveLength(1);
+  });
+
+  it('never touches a block that only uses "highlight" as a variant', async () => {
+    const html = base.replace('class="highlight"', 'class="steps highlight schema"');
+    store.set('/a.html', html);
+    expect((await applyFragmentSwap('/a.html', SHIPPING_COPY)).outcome).toBe('no-block');
+    expect(store.get('/a.html')).toBe(html);
+  });
+
+  it('skips a highlight block without the shipping row', async () => {
+    const html = base.replace('Free shipping and returns', 'Fast delivery');
+    store.set('/a.html', html);
+    expect((await applyFragmentSwap('/a.html', SHIPPING_COPY)).outcome).toBe('no-match');
+    expect(versions).toHaveLength(0);
+  });
+
+  it('rollback steps back one update at a time: fragment swap → text update → original', async () => {
+    store.set('/a.html', base);
+    await applyUpdate('/a.html', SHIPPING_COPY);
+    const textUpdated = store.get('/a.html')!;
+    await applyFragmentSwap('/a.html', SHIPPING_COPY);
+
+    expect((await applyRollback('/a.html', SHIPPING_COPY)).outcome).toBe('changed');
+    expect(store.get('/a.html')).toBe(textUpdated);
+    expect((await applyRollback('/a.html', SHIPPING_COPY)).outcome).toBe('changed');
+    expect(store.get('/a.html')).toBe(base);
+    expect((await applyRollback('/a.html', SHIPPING_COPY)).outcome).toBe('unchanged');
   });
 });

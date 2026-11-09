@@ -130,10 +130,10 @@ export async function writeSource(filePath: string, html: string): Promise<void>
   if (!resp.ok) throw new Error(`write ${resp.status}`);
 }
 
-interface VersionEntry { label?: string; url?: string; timestamp?: number }
+export interface VersionEntry { label?: string; url?: string; timestamp?: number }
 
-/** URL of the most recent DA version with this label (e.g. `/versionsource/org/repo/<id>/<vid>.html`), or null. */
-export async function findVersionUrl(filePath: string, label: string): Promise<string | null> {
+/** A document's DA version history (entries without a `url` are edit records, not restorable). */
+export async function listVersions(filePath: string): Promise<VersionEntry[]> {
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
   const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
@@ -142,11 +142,17 @@ export async function findVersionUrl(filePath: string, label: string): Promise<s
     headers: { Authorization: `Bearer ${t}` },
   });
   if (!resp.ok) throw new Error(`version list ${resp.status}`);
-  const list = await resp.json() as VersionEntry[];
-  const match = list
-    .filter((v) => v.label === label && v.url)
-    .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))[0];
-  return match?.url ?? null;
+  return resp.json() as Promise<VersionEntry[]>;
+}
+
+/** True when a published (aem.live) page exists at this URL. Authless; aem.live allows CORS. */
+export async function isLive(url: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${url}.plain.html`, { method: 'HEAD', cache: 'no-store' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Content of a version, given the `url` from the version list. */

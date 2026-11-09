@@ -76,6 +76,13 @@ filter so authors can select the changed set and use the normal Preview / Publis
 unpublished-changes guard or journal: Update is idempotent (re-run to resume), and pushing pending author
 edits live was accepted for this job.
 
+### D8 — Fragment-swap mode and run reports
+Update has an opt-in **fragment** mode: replace the whole `highlight` block with a `fragment` block that
+links to a shared fragment (same block markup convention as `/express/print`). Matching is by block *name*
+(first class), so `steps highlight` variants are never touched, and the block must contain the shipping row.
+Rollback restores the most recent version saved by either mode, so repeated rollbacks step back through
+updates. **Download report** (CSV / JSON) mirrors `da-copy-updater`'s run report for the rows shown.
+
 ## Reference — DA / AEM Admin APIs (established during planning)
 
 ### Document list & content — DA Admin API, base `https://admin.da.live`

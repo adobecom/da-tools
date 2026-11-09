@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { scanDocs, recheckStatuses, loadBatchMetadata, type ScanPhase } from '../lib/documentManager';
-import { checkDirectoryExists, daPathToLiveUrl, daPathToPreviewUrl, daPathToProdUrl } from '../api/daApi';
+import { checkDirectoryExists, daPathToLiveUrl, daPathToPreviewUrl, daPathToProdUrl, isLive } from '../api/daApi';
 import type { CrawlError } from '../api/crawl';
 import { useDaDocumentActions, type BulkActionResult, type BulkProgressOp } from '../hooks/useDaDocumentActions';
 import { ActivityLog, ProgressBar, type LogLevel, type LogLine, type ProgressCounter } from './Activity';
@@ -9,7 +9,8 @@ import DocumentManagerTable, { type SortField } from './DocumentManagerTable';
 import { ExternalLinkIcon } from './StatusCells';
 import type { DocRow } from '../types';
 import { COPY_PRESETS, type CopyPreset } from '../lib/copyPresets';
-import { runCopyBulk, copyResultLabel, type CopyDirection, type CopyResult } from '../lib/copyEdit';
+import { runCopyBulk, copyResultLabel, type CopyDirection, type CopyMode, type CopyResult } from '../lib/copyEdit';
+import { downloadText, reportRows, toCsv, toJson } from '../lib/report';
 
 const ALL = 'all';
 const NO_BATCH = '(no batch)';
@@ -25,7 +26,7 @@ const BULK_OP_LABEL: Record<BulkProgressOp, string> = {
 };
 
 /** Groups copy-edit results into the live counters shown under the progress bar. */
-function copyCounters(results: Iterable<CopyResult>, direction: CopyDirection): ProgressCounter[] {
+function copyCounters(results: Iterable<CopyResult>, direction: CopyDirection, mode: CopyMode): ProgressCounter[] {
   let changed = 0; let unchanged = 0; let skipped = 0; let failed = 0;
   for (const r of results) {
     if (r.outcome === 'changed') changed += 1;
@@ -33,9 +34,10 @@ function copyCounters(results: Iterable<CopyResult>, direction: CopyDirection): 
     else if (r.outcome === 'error') failed += 1;
     else skipped += 1;
   }
+  const sample: CopyResult = { direction, mode, outcome: 'changed' };
   return [
-    { label: direction === 'update' ? 'Updated' : 'Rolled back', value: changed, tone: 'green' },
-    { label: direction === 'update' ? 'Already updated' : 'Already original', value: unchanged, tone: 'gray' },
+    { label: copyResultLabel(sample), value: changed, tone: 'green' },
+    { label: copyResultLabel({ ...sample, outcome: 'unchanged' }), value: unchanged, tone: 'gray' },
     { label: 'Skipped (wording / missing)', value: skipped, tone: 'amber' },
     { label: 'Failed', value: failed, tone: 'red' },
   ];
@@ -129,7 +131,11 @@ export default function DocumentManagerView() {
   const [sortField, setSortField] = useState<SortField>('path');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [confirmOp, setConfirmOp] = useState<BulkConfirmOp | null>(null);
-  const [copyConfirm, setCopyConfirm] = useState<{ preset: CopyPreset; direction: CopyDirection } | null>(null);
+  const [copyConfirm, setCopyConfirm] = useState<{ preset: CopyPreset; direction: CopyDirection; mode: CopyMode } | null>(null);
+  const [useFragment, setUseFragment] = useState(false);
+  const [fragmentLive, setFragmentLive] = useState<'checking' | 'live' | 'not-live' | null>(null);
+  const [showReportMenu, setShowReportMenu] = useState(false);
+  const reportMenuRef = useRef<HTMLDivElement>(null);
   const [copyFilter, setCopyFilter] = useState<string>(ALL);
   const [copyCountersState, setCopyCounters] = useState<ProgressCounter[] | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -405,6 +411,40 @@ export default function DocumentManagerView() {
     return () => document.removeEventListener('mousedown', handler);
   }, [showExportMenu]);
 
+  useEffect(() => {
+    if (!showReportMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (reportMenuRef.current && !reportMenuRef.current.contains(e.target as Node)) setShowReportMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showReportMenu]);
+
+  // Check the fragment is published whenever the fragment-mode confirmation opens.
+  useEffect(() => {
+    const url = copyConfirm?.mode === 'fragment' ? copyConfirm.preset.fragment?.fragmentUrl : undefined;
+    if (!url) { setFragmentLive(null); return; }
+    let cancelled = false;
+    setFragmentLive('checking');
+    void isLive(url).then((live) => { if (!cancelled) setFragmentLive(live ? 'live' : 'not-live'); });
+    return () => { cancelled = true; };
+  }, [copyConfirm]);
+
+  /** Report of the rows currently shown (respecting filters), with copy results and links. */
+  function handleDownloadReport(format: 'csv' | 'json') {
+    setShowReportMenu(false);
+    const rows = reportRows(sorted, statusOf);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const folder = (rootPath ?? 'documents').split('/').filter(Boolean).pop() ?? 'documents';
+    if (format === 'csv') {
+      downloadText(`document-report-${folder}-${stamp}.csv`, toCsv(rows), 'text/csv;charset=utf-8;');
+    } else {
+      const filters = { subDirectory: subDirFilter, status: statusFilter, batch: batchFilter, copy: copyFilter };
+      downloadText(`document-report-${folder}-${stamp}.json`, toJson(rows, { root: rootPath, filters }), 'application/json');
+    }
+    log('info', `Downloaded ${format.toUpperCase()} report (${rows.length} documents${anyFilterActive ? ', filtered' : ''})`);
+  }
+
   // URLs are derived from each visible (sorted) doc's path + resolved stage.
   function collectUrls(kind: UrlExportKind): string[] {
     switch (kind) {
@@ -492,18 +532,23 @@ export default function DocumentManagerView() {
     }
   }
 
-  async function runCopyEdit(preset: CopyPreset, direction: CopyDirection, rows: DocRow[]) {
+  async function runCopyEdit(preset: CopyPreset, direction: CopyDirection, mode: CopyMode, rows: DocRow[]) {
     const paths = rows.map((d) => d.path);
     const op = direction === 'update' ? 'updating-copy' : 'rolling-back';
-    const verb = direction === 'update' ? preset.updateLabel : preset.rollbackLabel;
+    const verb = direction === 'rollback' ? preset.rollbackLabel
+      : mode === 'fragment' ? `${preset.updateLabel} (fragment swap)` : preset.updateLabel;
     const soFar: CopyResult[] = [];
-    setCopyCounters(copyCounters([], direction));
+    setCopyCounters(copyCounters([], direction, mode));
     setBulkProgress({ op, done: 0, total: paths.length });
     log('info', `${verb}: starting on ${paths.length} documents`);
+    if (direction === 'update' && mode === 'fragment' && preset.fragment && !(await isLive(preset.fragment.fragmentUrl))) {
+      log('warn', `The fragment is not published (${preset.fragment.fragmentUrl}). Publish it before publishing these pages, or the block will be missing on the live site.`);
+    }
     const results = await runCopyBulk(
       paths,
       preset,
       direction,
+      mode,
       (batch) => {
         const lines: { level: LogLevel; msg: string }[] = [];
         for (const [path, r] of batch) {
@@ -515,7 +560,7 @@ export default function DocumentManagerView() {
           });
         }
         logMany(lines);
-        setCopyCounters(copyCounters(soFar, direction));
+        setCopyCounters(copyCounters(soFar, direction, mode));
         setDocs((prev) => prev.map((d) => {
           const r = batch.get(d.path);
           if (!r) return d;
@@ -774,7 +819,36 @@ export default function DocumentManagerView() {
               <span className="text-gray-500">{filtered.length} shown</span>
             )}
 
-            <div ref={exportMenuRef} className="relative ml-auto">
+            <div ref={reportMenuRef} className="relative ml-auto">
+              <button
+                type="button"
+                onClick={() => setShowReportMenu((p) => !p)}
+                disabled={sorted.length === 0}
+                className="text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Download report
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                  <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                </svg>
+              </button>
+              {showReportMenu && (
+                <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
+                  <p className="px-4 pt-2.5 pb-1 text-xs text-gray-500">{sorted.length} documents shown (filters apply)</p>
+                  {(['csv', 'json'] as const).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => handleDownloadReport(f)}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer border-t border-gray-100"
+                    >
+                      {f === 'csv' ? 'CSV (one row per document)' : 'JSON (rows + summary counts)'}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div ref={exportMenuRef} className="relative">
               <button
                 type="button"
                 onClick={() => setShowExportMenu((p) => !p)}
@@ -830,8 +904,20 @@ export default function DocumentManagerView() {
                 {COPY_PRESETS.map((preset) => (
                   <Fragment key={preset.id}>
                     <span className="mx-1 h-5 border-l border-gray-300" aria-hidden />
-                    <BulkButton label={preset.updateLabel} onClick={() => setCopyConfirm({ preset, direction: 'update' })} disabled={baseDisabled} className="text-blue-700 hover:bg-blue-50 border-blue-200" />
-                    <BulkButton label={preset.rollbackLabel} onClick={() => setCopyConfirm({ preset, direction: 'rollback' })} disabled={baseDisabled} className="text-gray-700 hover:bg-gray-100 border-gray-300" />
+                    <BulkButton label={preset.updateLabel} onClick={() => setCopyConfirm({ preset, direction: 'update', mode: useFragment && preset.fragment ? 'fragment' : 'text' })} disabled={baseDisabled} className="text-blue-700 hover:bg-blue-50 border-blue-200" />
+                    {preset.fragment && (
+                      <label className="flex items-center gap-1.5 text-xs text-gray-600" title={preset.fragment.fragmentDaPath}>
+                        <input
+                          type="checkbox"
+                          checked={useFragment}
+                          onChange={(e) => setUseFragment(e.target.checked)}
+                          disabled={anyBusy}
+                          className="cursor-pointer"
+                        />
+                        Use fragment instead
+                      </label>
+                    )}
+                    <BulkButton label={preset.rollbackLabel} onClick={() => setCopyConfirm({ preset, direction: 'rollback', mode: 'text' })} disabled={baseDisabled} className="text-gray-700 hover:bg-gray-100 border-gray-300" />
                   </Fragment>
                 ))}
               </div>
@@ -853,9 +939,11 @@ export default function DocumentManagerView() {
       )}
 
       {copyConfirm && (() => {
-        const { preset, direction } = copyConfirm;
+        const { preset, direction, mode } = copyConfirm;
         const rule = preset.update;
-        const verb = direction === 'update' ? preset.updateLabel : preset.rollbackLabel;
+        const swap = preset.fragment;
+        const verb = direction === 'rollback' ? preset.rollbackLabel
+          : mode === 'fragment' ? `${preset.updateLabel} (fragment swap)` : preset.updateLabel;
         return (
           <ConfirmModal
             title={`${verb}: ${selectedDocs.length} document${selectedDocs.length !== 1 ? 's' : ''}?`}
@@ -865,10 +953,28 @@ export default function DocumentManagerView() {
             onConfirm={() => {
               const rows = selectedDocs;
               setCopyConfirm(null);
-              void withBusy(() => runCopyEdit(preset, direction, rows));
+              void withBusy(() => runCopyEdit(preset, direction, mode, rows));
             }}
           >
-            {direction === 'update' ? (
+            {direction === 'update' && mode === 'fragment' && swap ? (
+              <>
+                <p className="text-sm text-gray-600">
+                  Replaces the whole <code>{swap.blockName}</code> block with a <code>fragment</code> block linking to{' '}
+                  <a href={`https://da.live/edit#${swap.fragmentDaPath}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                    {swap.fragmentDaPath.split('/').pop()}
+                  </a>. Only a single <code>{swap.blockName}</code> block containing the shipping row is replaced; anything else
+                  is reported and left alone. Right before each change, a DA version labeled <code>{swap.versionLabel}</code> is saved.
+                </p>
+                {fragmentLive === 'checking' && <p className="text-sm text-gray-500">Checking whether the fragment is published…</p>}
+                {fragmentLive === 'live' && <p className="text-sm text-green-700">The fragment is published.</p>}
+                {fragmentLive === 'not-live' && (
+                  <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    The fragment is <strong>not published</strong>. Publish it before publishing these pages, or the
+                    highlight block will be missing on the live site.
+                  </p>
+                )}
+              </>
+            ) : direction === 'update' ? (
               <p className="text-sm text-gray-600">
                 In the <code>{rule.blockClass}</code> block, replaces <code>{rule.find}</code> with <code>{rule.replace}</code>.
                 Only an exact match is edited; other wording is reported and left alone. Right before each change,
@@ -876,10 +982,11 @@ export default function DocumentManagerView() {
               </p>
             ) : (
               <p className="text-sm text-gray-600">
-                Restores each document to its saved <code>{rule.versionLabel}</code> version, replacing the whole
-                document. Any edits made after the update are discarded. A <code>{preset.rollbackVersionLabel}</code>{' '}
-                version is saved first, so the rollback can be undone from DA history. Documents that already have
-                the original copy are left alone.
+                Restores each document to the version saved right before its most recent update (text or fragment
+                swap), replacing the whole document. Any edits made after that update are discarded. A{' '}
+                <code>{preset.rollbackVersionLabel}</code> version is saved first, so the rollback can be undone from DA
+                history. Documents that already have the original copy are left alone. Running it again steps back one
+                more update.
               </p>
             )}
             <p className="text-sm text-gray-600">Nothing is previewed or published. Do that afterwards with the Preview / Publish buttons.</p>

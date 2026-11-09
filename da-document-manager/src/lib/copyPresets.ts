@@ -1,6 +1,7 @@
 // Bulk copy edits for the Document Manager. Each preset is a find & replace scoped to one block
-// element. The UI renders an Update / Rollback button pair for each: Update applies the rule (saving a
-// labeled version first), Rollback restores that saved version. New copy changes are added as presets.
+// element, optionally with an alternative "fragment swap" mode that replaces the whole block with a
+// fragment reference. The UI renders an Update / Rollback button pair for each: Update applies the
+// change (saving a labeled version first), Rollback restores the most recent saved version.
 
 export interface ReplaceRule {
   /** Class of the block whose rows are searched (e.g. `highlight` matches `<div class="highlight">`). */
@@ -15,6 +16,22 @@ export interface ReplaceRule {
   versionLabel: string;
 }
 
+/** Alternative Update mode: replace the whole block with a `fragment` block linking to a shared fragment. */
+export interface FragmentSwap {
+  /** Block name (first class) to replace, e.g. `highlight` (not `steps highlight`, where it's a variant). */
+  blockName: string;
+  /** Link written into the `fragment` block. */
+  fragmentUrl: string;
+  /** DA path of the fragment, for linking to it in the UI. */
+  fragmentDaPath: string;
+  /** The block is only replaced if its text contains one of these, proving it's the expected block. */
+  mustContain: string[];
+  /** Label for the DA version saved before each swap. */
+  versionLabel: string;
+  /** Checkbox label in the bulk bar. */
+  optionLabel: string;
+}
+
 export interface CopyPreset {
   id: string;
   updateLabel: string;
@@ -24,6 +41,7 @@ export interface CopyPreset {
   update: ReplaceRule;
   /** Label for the DA version saved before a rollback overwrites the document (so it can be undone). */
   rollbackVersionLabel: string;
+  fragment?: FragmentSwap;
 }
 
 export const SHIPPING_COPY: CopyPreset = {
@@ -40,6 +58,14 @@ export const SHIPPING_COPY: CopyPreset = {
     versionLabel: 'Before MWPW-214582 copy update',
   },
   rollbackVersionLabel: 'Before MWPW-214582 rollback',
+  fragment: {
+    blockName: 'highlight',
+    fragmentUrl: 'https://main--da-express-milo--adobecom.aem.live/express/fragments/print-product-detail/highlight-ribbon',
+    fragmentDaPath: '/adobecom/da-express-milo/express/fragments/print-product-detail/highlight-ribbon',
+    mustContain: ['Free shipping and returns', 'Easy 30-day returns'],
+    versionLabel: 'Before MWPW-214582 fragment swap',
+    optionLabel: 'Replace the whole highlight block with the highlight-ribbon fragment',
+  },
 };
 
 export const COPY_PRESETS: CopyPreset[] = [SHIPPING_COPY];
