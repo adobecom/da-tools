@@ -4,7 +4,8 @@ import { classify } from './classify';
 import type { CopyPreset } from './copyPresets';
 import { classifyFragmentSwap } from './fragmentSwap';
 
-export type CopyDirection = 'update' | 'rollback';
+/** `dry-run` predicts what Update would do (same matching), without writing anything. */
+export type CopyDirection = 'update' | 'rollback' | 'dry-run';
 
 /** How Update edits a document: replace the row's text, or replace the whole block with a fragment. */
 export type CopyMode = 'text' | 'fragment';
@@ -34,6 +35,7 @@ export function copyResultLabel(r: CopyResult): string {
   switch (r.outcome) {
     case 'changed':
       if (r.direction === 'rollback') return 'Rolled back';
+      if (r.direction === 'dry-run') return r.mode === 'fragment' ? 'Would replace with fragment' : 'Would update';
       return r.mode === 'fragment' ? 'Replaced with fragment' : 'Updated';
     case 'unchanged':
       if (r.direction === 'rollback') return 'Already original';
@@ -85,6 +87,25 @@ export async function applyFragmentSwap(path: string, preset: CopyPreset): Promi
   return { outcome: 'changed' };
 }
 
+/**
+ * Dry run: read the document and classify it exactly as Update would, without saving a version or
+ * writing. `changed` means Update would edit it.
+ */
+export async function dryRunUpdate(path: string, preset: CopyPreset, mode: CopyMode): Promise<Outcome> {
+  const html = await cat(path);
+  if (mode === 'fragment') {
+    if (!preset.fragment) return { outcome: 'error', detail: 'This preset has no fragment option' };
+    const c = classifyFragmentSwap(html, preset.fragment);
+    if (c.outcome === 'already-swapped') return { outcome: 'unchanged' };
+    if (c.outcome !== 'match') return { outcome: c.outcome, detail: c.detail };
+    return { outcome: 'changed' };
+  }
+  const c = classify(html, preset.update);
+  if (c.outcome === 'already-updated') return { outcome: 'unchanged' };
+  if (c.outcome !== 'match') return { outcome: c.outcome, detail: c.detail };
+  return { outcome: 'changed' };
+}
+
 const MAX_VERSIONS_TO_TRY = 5;
 
 /**
@@ -129,8 +150,10 @@ export async function runCopyBulk(
   onResults: (results: Map<string, CopyResult>) => void,
   onProgress: (done: number, total: number) => void,
 ): Promise<Map<string, CopyResult>> {
-  const apply = direction === 'rollback' ? applyRollback : mode === 'fragment' ? applyFragmentSwap : applyUpdate;
-  const resultMode = direction === 'update' ? mode : undefined;
+  const apply = direction === 'rollback' ? applyRollback
+    : direction === 'dry-run' ? (path: string, p: CopyPreset) => dryRunUpdate(path, p, mode)
+      : mode === 'fragment' ? applyFragmentSwap : applyUpdate;
+  const resultMode = direction === 'rollback' ? undefined : mode;
   const all = new Map<string, CopyResult>();
   let pending = new Map<string, CopyResult>();
   let done = 0;

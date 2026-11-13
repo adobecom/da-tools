@@ -18,7 +18,10 @@ export function reportRows(rows: DocRow[], statusOf: (d: DocRow) => ReportStatus
     status: statusOf(d),
     lastUpdated: toIso(d.lastUpdated),
     copyResult: d.copyResult ? copyResultLabel(d.copyResult) : '',
-    copyAction: d.copyResult ? (d.copyResult.direction === 'rollback' ? 'rollback' : d.copyResult.mode ?? 'text') : '',
+    copyAction: d.copyResult
+      ? d.copyResult.direction === 'rollback' ? 'rollback'
+        : `${d.copyResult.direction === 'dry-run' ? 'dry run: ' : ''}${d.copyResult.mode ?? 'text'}`
+      : '',
     copyDetail: d.copyResult?.detail ?? '',
     error: d.error ?? '',
     editUrl: `https://da.live/edit#${d.path.replace(/\.html$/, '')}`,

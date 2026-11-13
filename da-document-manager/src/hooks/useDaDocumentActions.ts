@@ -16,7 +16,7 @@ import { runBatch } from '../lib/concurrency';
 import type { RowResult, RowStage } from '../types';
 
 /** Which bulk operation is reporting progress (drives an n/m counter in the view). */
-export type BulkProgressOp = 'previewing' | 'publishing' | 'unpublishing' | 'deleting' | 'updating-copy' | 'rolling-back';
+export type BulkProgressOp = 'previewing' | 'publishing' | 'unpublishing' | 'deleting' | 'updating-copy' | 'rolling-back' | 'dry-run';
 
 /** Per-path result of a bulk action, for logging. `failed` maps path → reason. */
 export interface BulkActionResult {

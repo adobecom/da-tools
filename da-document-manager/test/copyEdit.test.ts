@@ -154,3 +154,28 @@ describe('fragment swap', () => {
     expect((await applyRollback('/a.html', SHIPPING_COPY)).outcome).toBe('unchanged');
   });
 });
+
+describe('dry run', () => {
+  const docs: [string, string][] = [
+    ['/match.html', base],
+    ['/variant.html', base.replace('Free shipping and returns', 'Free shipping &amp; returns')],
+    ['/noblock.html', base.replace('class="highlight"', 'class="other"')],
+  ];
+
+  it.each(['text', 'fragment'] as const)('%s mode: writes nothing, and predicts exactly what Update then does', async (mode) => {
+    for (const [p, html] of docs) store.set(p, html);
+    const paths = docs.map(([p]) => p);
+    const before = new Map(store);
+
+    const dry = await runCopyBulk(paths, SHIPPING_COPY, 'dry-run', mode, () => {}, () => {});
+    expect(store).toEqual(before);
+    expect(versions).toHaveLength(0);
+    expect(copyResultLabel(dry.get('/match.html')!)).toBe(mode === 'fragment' ? 'Would replace with fragment' : 'Would update');
+
+    const real = await runCopyBulk(paths, SHIPPING_COPY, 'update', mode, () => {}, () => {});
+    for (const p of paths) expect(real.get(p)!.outcome).toBe(dry.get(p)!.outcome);
+
+    const again = await runCopyBulk(paths, SHIPPING_COPY, 'dry-run', mode, () => {}, () => {});
+    expect(copyResultLabel(again.get('/match.html')!)).toBe(mode === 'fragment' ? 'Already uses fragment' : 'Already updated');
+  });
+});

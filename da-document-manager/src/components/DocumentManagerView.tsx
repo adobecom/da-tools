@@ -23,6 +23,7 @@ const BULK_OP_LABEL: Record<BulkProgressOp, string> = {
   deleting: 'Deleting',
   'updating-copy': 'Updating copy',
   'rolling-back': 'Rolling back',
+  'dry-run': 'Dry run (reading documents)',
 };
 
 /** Groups copy-edit results into the live counters shown under the progress bar. */
@@ -534,14 +535,15 @@ export default function DocumentManagerView() {
 
   async function runCopyEdit(preset: CopyPreset, direction: CopyDirection, mode: CopyMode, rows: DocRow[]) {
     const paths = rows.map((d) => d.path);
-    const op = direction === 'update' ? 'updating-copy' : 'rolling-back';
+    const op = direction === 'update' ? 'updating-copy' : direction === 'rollback' ? 'rolling-back' : 'dry-run';
+    const updateVerb = mode === 'fragment' ? `${preset.updateLabel} (fragment swap)` : preset.updateLabel;
     const verb = direction === 'rollback' ? preset.rollbackLabel
-      : mode === 'fragment' ? `${preset.updateLabel} (fragment swap)` : preset.updateLabel;
+      : direction === 'dry-run' ? `Dry run of ${updateVerb}` : updateVerb;
     const soFar: CopyResult[] = [];
     setCopyCounters(copyCounters([], direction, mode));
     setBulkProgress({ op, done: 0, total: paths.length });
     log('info', `${verb}: starting on ${paths.length} documents`);
-    if (direction === 'update' && mode === 'fragment' && preset.fragment && !(await isLive(preset.fragment.fragmentUrl))) {
+    if (direction !== 'rollback' && mode === 'fragment' && preset.fragment && !(await isLive(preset.fragment.fragmentUrl))) {
       log('warn', `The fragment is not published (${preset.fragment.fragmentUrl}). Publish it before publishing these pages, or the block will be missing on the live site.`);
     }
     const results = await runCopyBulk(
@@ -564,7 +566,7 @@ export default function DocumentManagerView() {
         setDocs((prev) => prev.map((d) => {
           const r = batch.get(d.path);
           if (!r) return d;
-          return r.outcome === 'changed' ? { ...d, copyResult: r, lastUpdated: Date.now() } : { ...d, copyResult: r };
+          return r.outcome === 'changed' && direction !== 'dry-run' ? { ...d, copyResult: r, lastUpdated: Date.now() } : { ...d, copyResult: r };
         }));
       },
       (done, total) => setBulkProgress({ op, done, total }),
@@ -575,7 +577,12 @@ export default function DocumentManagerView() {
     const sortedCounts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
     const failed = [...results.values()].filter((r) => r.outcome === 'error').length;
     log(failed > 0 ? 'warn' : 'success', `${verb} finished: ${sortedCounts.map(([l, n]) => `${l} ${n}`).join(', ')}`);
-    log('info', 'Nothing was previewed or published. To do that, filter by Copy and Status, select all, then Preview / Publish.');
+    if (direction === 'dry-run') {
+      const willChange = [...results.values()].filter((r) => r.outcome === 'changed').length;
+      log('info', `Dry run only: no documents were changed. To update exactly the ${willChange} that would change, set the Copy filter to "${copyResultLabel({ direction, mode, outcome: 'changed' })}", select all, then ${preset.updateLabel}${mode === 'fragment' ? ' (with "Use fragment instead" ticked)' : ''}.`);
+    } else {
+      log('info', 'Nothing was previewed or published. To do that, filter by Copy and Status, select all, then Preview / Publish.');
+    }
   }
 
   /** Runs a Preview / Publish / Unpublish / Delete bulk action and logs its outcome. */
@@ -904,6 +911,17 @@ export default function DocumentManagerView() {
                 {COPY_PRESETS.map((preset) => (
                   <Fragment key={preset.id}>
                     <span className="mx-1 h-5 border-l border-gray-300" aria-hidden />
+                    <BulkButton
+                      label="Dry run"
+                      title={`Read the selected documents and show what ${preset.updateLabel} would do, without changing anything`}
+                      onClick={() => {
+                        const rows = selectedDocs;
+                        const mode: CopyMode = useFragment && preset.fragment ? 'fragment' : 'text';
+                        void withBusy(() => runCopyEdit(preset, 'dry-run', mode, rows));
+                      }}
+                      disabled={baseDisabled}
+                      className="text-gray-700 hover:bg-gray-100 border-gray-300"
+                    />
                     <BulkButton label={preset.updateLabel} onClick={() => setCopyConfirm({ preset, direction: 'update', mode: useFragment && preset.fragment ? 'fragment' : 'text' })} disabled={baseDisabled} className="text-blue-700 hover:bg-blue-50 border-blue-200" />
                     {preset.fragment && (
                       <label className="flex items-center gap-1.5 text-xs text-gray-600" title={preset.fragment.fragmentDaPath}>
@@ -1029,15 +1047,18 @@ function BulkButton({
   onClick,
   disabled,
   className,
+  title,
 }: {
   label: string;
   onClick: () => void;
   disabled: boolean;
   className: string;
+  title?: string;
 }) {
   return (
     <button
       type="button"
+      title={title}
       onClick={onClick}
       disabled={disabled}
       className={`px-3 py-1.5 bg-white text-xs font-medium rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors ${className}`}

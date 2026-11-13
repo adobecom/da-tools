@@ -9,6 +9,11 @@ Manager** tab of [pdp-document-generator](../pdp-document-generator/).
 Select documents, then use **Update shipping copy** or **Rollback to previous version** in the bulk bar
 (MWPW-214582).
 
+- **Dry run** reads the selected documents and shows, in the **Copy** column, counters, and activity log,
+  what Update would do (in the mode set by the fragment checkbox): "Would update" / "Would replace with
+  fragment", "Already updated", "Different wording", "No matching block", etc. Nothing is written. To
+  update exactly the predicted set, set the Copy filter to "Would update", select all, then Update.
+
 - **Update shipping copy** has two modes:
   - *Text (default)*: in the `highlight` block, replaces "Free shipping and returns" with
     "Easy 30-day returns". Only an exact single match is edited.
