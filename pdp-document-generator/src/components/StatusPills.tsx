@@ -113,7 +113,7 @@ export function PublishPill({
     return (
       <button type="button" onClick={onPublish}
         className="text-xs text-green-600 hover:text-green-800 font-medium transition-colors cursor-pointer">
-        Publish
+        Publish to AEM Live
       </button>
     );
   }
@@ -126,7 +126,7 @@ export function PublishPill({
         </a>
         <button type="button" onClick={onUnpublish}
           className="text-xs text-red-500 hover:text-red-700 font-medium transition-colors cursor-pointer">
-          Unpublish
+          Remove from AEM Live
         </button>
       </div>
     );
@@ -135,7 +135,7 @@ export function PublishPill({
     return (
       <button type="button" onClick={onPublish}
         className="text-xs text-green-600 hover:text-green-800 font-medium transition-colors cursor-pointer">
-        Publish
+        Publish to AEM Live
       </button>
     );
   }

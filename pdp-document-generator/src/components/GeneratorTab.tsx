@@ -4,15 +4,15 @@ import GeneratePanel from './GeneratePanel';
 import TemplateOverridePanel from './TemplateOverridePanel';
 import { useBeforeUnload } from '../hooks/useBeforeUnload';
 import type { CsvRow, ProductTypeConfig } from '../types';
+import type { SiteConfig } from '../sites';
 
-export const DEFAULT_CONFIG_SHEET = '/adobecom/da-express-milo/doc-generator-presets';
 
-export default function GeneratorTab() {
+export default function GeneratorTab({ site }: { site: SiteConfig }) {
   const [rows, setRows] = useState<CsvRow[]>([]);
   const [selectedRows, setSelectedRows] = useState<CsvRow[]>([]);
   const [csvReadiness, setCsvReadiness] = useState({ dataComplete: false, idsValid: false, noDuplicates: true });
   const [hasGeneratedResults, setHasGeneratedResults] = useState(false);
-  const [configSheetPath, setConfigSheetPath] = useState(DEFAULT_CONFIG_SHEET);
+  const [configSheetPath, setConfigSheetPath] = useState(site.defaultConfigSheet);
   const [configSheetStatus, setConfigSheetStatus] = useState<'idle' | 'loading' | 'valid' | 'invalid' | 'error'>('idle');
   const [productTypeConfigs, setProductTypeConfigs] = useState<ProductTypeConfig[]>([]);
   const [templateOverrideEnabled, setTemplateOverrideEnabled] = useState(false);
@@ -59,6 +59,7 @@ export default function GeneratorTab() {
   return (
     <>
       <TemplateOverridePanel
+        site={site}
         enabled={templateOverrideEnabled}
         onEnabledChange={setTemplateOverrideEnabled}
         onOverrideChange={setOverrideConfig}
@@ -76,6 +77,7 @@ export default function GeneratorTab() {
       </div>
 
       <GeneratePanel
+        site={site}
         rows={selectedRows}
         productTypeConfigs={productTypeConfigs}
         overrideConfig={overrideConfig}

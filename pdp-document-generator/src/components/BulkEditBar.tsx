@@ -76,7 +76,7 @@ export default function BulkEditBar({
           onClick={onPublish}
           className="px-3.5 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
         >
-          {countLabel('Publish')}
+          {countLabel('Publish to AEM Live')}
         </button>
         <button
           type="button"
@@ -84,7 +84,7 @@ export default function BulkEditBar({
           onClick={onUnpublish}
           className="px-3.5 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
         >
-          {countLabel('Unpublish')}
+          {countLabel('Remove from AEM Live')}
         </button>
         <button
           type="button"

@@ -101,7 +101,7 @@ export default function DocumentManagerTable({
           <div className="px-3 py-2 font-medium text-gray-600">Short Title</div>
           <div className="px-3 py-2 font-medium text-gray-600">Description</div>
           <div className="px-3 py-2 font-medium text-gray-600">Preview</div>
-          <div className="px-3 py-2 font-medium text-gray-600">Publish</div>
+          <div className="px-3 py-2 font-medium text-gray-600">AEM Live</div>
           <div className="px-3 py-2 font-medium text-gray-600">GMC Status</div>
           <div className="px-3 py-2 font-medium text-gray-600">Delete</div>
         </div>

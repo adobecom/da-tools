@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cat, checkDirectoryExists, fetchSheet, validateTemplate } from '../api/daApi';
 import type { DirectoryCheckResult } from '../api/daApi';
 import type { ProductTypeConfig } from '../types';
+import { isPathWithinSite, type SiteConfig } from '../sites';
 
 interface Props {
+  site: SiteConfig;
   enabled: boolean;
   onEnabledChange: (v: boolean) => void;
   onOverrideChange: (config: ProductTypeConfig | undefined) => void;
@@ -77,6 +79,7 @@ function ExternalLinkIcon() {
 }
 
 export default function TemplateOverridePanel({
+  site,
   enabled,
   onEnabledChange,
   onOverrideChange,
@@ -105,6 +108,18 @@ export default function TemplateOverridePanel({
       setConfigSheetValidation({ status: 'idle', message: null, missingColumns: [], rowCount: 0 });
       return;
     }
+    if (!isPathWithinSite(path, site)) {
+      setOptions([]);
+      onConfigSheetLoad(path, []);
+      onOverrideChange(undefined);
+      setConfigSheetValidation({
+        status: 'invalid',
+        message: `Config sheet must be inside ${site.daRoot}`,
+        missingColumns: [],
+        rowCount: 0,
+      });
+      return;
+    }
     setConfigSheetValidation({ status: 'loading', message: null, missingColumns: [], rowCount: 0 });
     try {
       const rows = await fetchSheet(path);
@@ -126,7 +141,43 @@ export default function TemplateOverridePanel({
         return;
       }
 
-      const validRows = rows.filter((r) => r['Product Type'] && r['Template Path']);
+      const configuredRows = rows
+        .map((row, index) => ({ row, number: index + 1 }))
+        .filter(({ row }) => row['Template Path'] || row['Output Directory']);
+      const incompleteRows = configuredRows.filter(
+        ({ row }) => !row['Template Path'] || !row['Output Directory'],
+      );
+      if (incompleteRows.length > 0) {
+        setOptions([]);
+        onConfigSheetLoad(path, []);
+        onOverrideChange(undefined);
+        setConfigSheetValidation({
+          status: 'invalid',
+          message: `Config entries ${incompleteRows.map(({ number }) => number).join(', ')} must include both Template Path and Output Directory`,
+          missingColumns: missingOptional,
+          rowCount: 0,
+        });
+        return;
+      }
+
+      const offsiteRows = configuredRows.filter(({ row }) => (
+        !isPathWithinSite(row['Template Path'], site)
+        || !isPathWithinSite(row['Output Directory'], site)
+      ));
+      if (offsiteRows.length > 0) {
+        setOptions([]);
+        onConfigSheetLoad(path, []);
+        onOverrideChange(undefined);
+        setConfigSheetValidation({
+          status: 'invalid',
+          message: `Config entries ${offsiteRows.map(({ number }) => number).join(', ')} must use paths inside ${site.daRoot}`,
+          missingColumns: missingOptional,
+          rowCount: 0,
+        });
+        return;
+      }
+
+      const validRows = rows.filter((r) => r['Product Type'] && r['Template Path'] && r['Output Directory']);
       if (validRows.length === 0) {
         setConfigSheetValidation({
           status: 'invalid',
@@ -144,7 +195,7 @@ export default function TemplateOverridePanel({
       }));
 
       const parsedOptions: TemplateOption[] = rows
-        .filter((r) => r['Template Path'])
+        .filter((r) => r['Template Path'] && r['Output Directory'])
         .map((r) => ({
           productName: r['Product Name'] ?? '',
           templatePath: r['Template Path'],

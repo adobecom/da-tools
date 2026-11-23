@@ -14,10 +14,10 @@ import BulkFieldEditModal from './BulkFieldEditModal';
 import GmcSubmitDialog from './gmc/GmcSubmitDialog';
 import EnvToggle from './ui/EnvToggle';
 import type { ManagedDoc, GmcEnv, GmcEnvState } from '../types';
+import { isPathWithinSite, type SiteConfig } from '../sites';
 
 const LEGACY_BATCH = '(legacy / no batch)';
 const ALL = 'all';
-const DEFAULT_ROOT_PATH = '/adobecom/da-express-milo/express/print';
 
 type UrlExportKind = 'document' | 'preview' | 'live' | 'prod';
 type BulkConfirmOp = 'preview' | 'publish' | 'unpublish' | 'delete';
@@ -46,11 +46,11 @@ function ScanProgressBar({ progress }: { progress: { phase: ScanPhase; done: num
   );
 }
 
-export default function DocumentManagerTab() {
-  const [rootPathInput, setRootPathInput] = useState(DEFAULT_ROOT_PATH);
+export default function DocumentManagerTab({ site }: { site: SiteConfig }) {
+  const [rootPathInput, setRootPathInput] = useState(site.defaultManagerRoot);
   // Starts null so the scan is manual — kicked off by the Scan button via handleScan — rather than
-  // running automatically on mount. rootPathInput stays pre-filled with DEFAULT_ROOT_PATH so the
-  // user only has to click Scan.
+  // running automatically on mount. rootPathInput stays pre-filled with the selected site's root
+  // so the user only has to click Scan.
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [scanNonce, setScanNonce] = useState(0);
   const [docs, setDocs] = useState<ManagedDoc[]>([]);
@@ -95,6 +95,7 @@ export default function DocumentManagerTab() {
   // Strict single-operation lock: while any long op runs (scan, doc-info load, status recheck, or a
   // bulk/GMC action), every trigger is disabled so two operations can never overlap.
   const anyBusy = scanning || busy;
+  const rootPathValid = isPathWithinSite(rootPathInput, site);
 
   // Cancel any in-flight manual op (recheck / doc-info load) when the view unmounts (navigate away).
   useEffect(() => () => { opIdRef.current += 1; }, []);
@@ -102,7 +103,7 @@ export default function DocumentManagerTab() {
   function handleScan() {
     if (anyBusy) return;
     const trimmed = rootPathInput.trim();
-    if (!trimmed) return;
+    if (!trimmed || !isPathWithinSite(trimmed, site)) return;
     includeContentRef.current = includeContent;
     // A new scan supersedes any in-flight manual op (recheck / doc-info load) and resets doc-info
     // state + the content/tree-dependent filters (the tree changed and content is cleared).
@@ -438,17 +439,22 @@ export default function DocumentManagerTab() {
           type="text"
           value={rootPathInput}
           onChange={(e) => setRootPathInput(e.target.value)}
-          placeholder={DEFAULT_ROOT_PATH}
+          placeholder={site.defaultManagerRoot}
           className="flex-1 min-w-[280px] max-w-md h-9 px-3 border border-gray-300 rounded-lg text-sm font-mono"
         />
         <button
           type="button"
           onClick={handleScan}
-          disabled={anyBusy || !rootPathInput.trim()}
+          disabled={anyBusy || !rootPathValid}
           className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
         >
           {scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
         </button>
+        {!rootPathValid && (
+          <span className="basis-full text-xs text-red-600">
+            Root path must remain inside {site.daRoot}
+          </span>
+        )}
         <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer" title="Fetch each document's content (title, product type, batch, etc.) during the scan. Slower — leave off for a fast scan and fetch on demand.">
           <input
             type="checkbox"
@@ -568,7 +574,7 @@ export default function DocumentManagerTab() {
                   { kind: 'document', label: 'Document links' },
                   { kind: 'preview', label: 'Preview links (.aem.page)' },
                   { kind: 'live', label: 'Published (.aem.live)' },
-                  { kind: 'prod', label: 'Published (adobe.com)' },
+                  { kind: 'prod', label: 'Production hostname' },
                 ];
                 return (
                   <div className="absolute right-0 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
@@ -649,8 +655,8 @@ export default function DocumentManagerTab() {
       {confirmOp && (() => {
         const cfg = {
           preview: { verb: 'Preview', className: 'bg-indigo-600 hover:bg-indigo-700', run: () => actions.previewBulk(selectedDocs), body: 'This will (re)generate an aem.page preview for the following documents:' },
-          publish: { verb: 'Publish', className: 'bg-green-600 hover:bg-green-700', run: () => actions.publishBulk(selectedDocs), body: 'This will publish the following documents to production:' },
-          unpublish: { verb: 'Unpublish', className: 'bg-red-600 hover:bg-red-700', run: () => actions.unpublishBulk(selectedDocs), body: 'This will unpublish (remove from production) the following documents:' },
+          publish: { verb: 'Publish to AEM Live', className: 'bg-green-600 hover:bg-green-700', run: () => actions.publishBulk(selectedDocs), body: 'This publishes the following documents to the AEM live tier (.aem.live). Any connected CDN may serve that content:' },
+          unpublish: { verb: 'Remove from AEM Live', className: 'bg-red-600 hover:bg-red-700', run: () => actions.unpublishBulk(selectedDocs), body: 'This removes the following documents from the AEM live tier and any connected CDN:' },
           delete: { verb: 'Delete', className: 'bg-red-700 hover:bg-red-800', run: () => actions.deleteBulk(selectedDocs), body: 'This will permanently delete the following documents from DA:' },
         }[confirmOp];
         return (

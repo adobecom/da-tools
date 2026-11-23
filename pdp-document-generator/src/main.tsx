@@ -8,7 +8,7 @@ import App from './App';
 const queryClient = new QueryClient();
 
 async function initToken() {
-  const localToken = import.meta.env.VITE_DA_TOKEN;
+  const localToken = import.meta.env.DEV ? import.meta.env.VITE_DA_TOKEN : undefined;
   if (localToken) {
     setToken(localToken);
     return;

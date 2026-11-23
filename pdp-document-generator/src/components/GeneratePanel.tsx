@@ -15,8 +15,10 @@ import {
   type ExistenceCheck,
 } from './StatusPills';
 import type { CsvRow, ProductTypeConfig, RowResult, RowStage } from '../types';
+import { isConfigWithinSite, isPathWithinSite, type SiteConfig } from '../sites';
 
 interface Props {
+  site: SiteConfig;
   rows: CsvRow[];
   productTypeConfigs: ProductTypeConfig[];
   overrideConfig?: ProductTypeConfig;
@@ -33,7 +35,7 @@ type BulkOp = 'idle' | 'generating' | 'previewing' | 'publishing' | 'unpublishin
 
 type UrlExportKind = 'document' | 'preview' | 'live' | 'prod';
 
-export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig, generateBlockReason, onResultsChange }: Props) {
+export default function GeneratePanel({ site, rows, productTypeConfigs, overrideConfig, generateBlockReason, onResultsChange }: Props) {
   const [results, setResults] = useState<RowResult[]>([]);
   const [bulkOp, setBulkOp] = useState<BulkOp>('idle');
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
@@ -57,12 +59,13 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
 
   const previewRows = results.length === 0
     ? rows.map((row) => {
-        const cfg = overrideConfig ?? productTypeConfigs.find((c) => c.productType === row.product_type?.trim());
+        const cfg = resolveConfig(row.product_type ?? '');
+        const path = cfg ? resolveOutputPath(row, cfg) : undefined;
         return {
           id: row['_id'],
-          path: cfg ? rowToOutputPath(row, cfg.outputDir) : '',
+          path: path ?? '',
           productType: row.product_type ?? '',
-          hasConfig: !!cfg,
+          hasConfig: !!path,
         };
       })
     : [];
@@ -184,12 +187,22 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
     return productTypeConfigs.find((c) => c.productType === productType?.trim());
   }
 
+  function resolveConfig(productType: string): ProductTypeConfig | undefined {
+    const config = overrideConfig ?? lookupConfig(productType);
+    return config && isConfigWithinSite(config, site) ? config : undefined;
+  }
+
+  function resolveOutputPath(row: CsvRow, config: ProductTypeConfig): string | undefined {
+    const path = rowToOutputPath(row, config.outputDir);
+    return isPathWithinSite(path, site) ? path : undefined;
+  }
+
   // Existing-document handling: a row whose output path already exists in DA is
   // excluded from the Generate set by default. The "include duplicates" checkbox
   // opts them back in (they overwrite the existing doc, with a version backup).
   const rowOutputPath = (row: CsvRow) => {
-    const cfg = overrideConfig ?? lookupConfig(row.product_type ?? '');
-    return cfg ? rowToOutputPath(row, cfg.outputDir) : '';
+    const cfg = resolveConfig(row.product_type ?? '');
+    return cfg ? resolveOutputPath(row, cfg) ?? '' : '';
   };
   const rowAlreadyExists = (row: CsvRow) => existenceStatus[rowOutputPath(row)] === 'exists';
   const existingCount = rows.filter(rowAlreadyExists).length;
@@ -226,8 +239,8 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
     const existenceSnapshot = { ...existenceStatus };
     setResults(
       rowsToGenerate.map((row) => {
-        const cfg = overrideConfig ?? lookupConfig(row.product_type ?? '');
-        return { id: row['_id'], path: cfg ? rowToOutputPath(row, cfg.outputDir) : '', stage: 'pending' };
+        const cfg = resolveConfig(row.product_type ?? '');
+        return { id: row['_id'], path: cfg ? resolveOutputPath(row, cfg) ?? '' : '', stage: 'pending' };
       }),
     );
     setBulkOp('generating');
@@ -238,19 +251,27 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
     let idx = 0;
 
     async function processRow(row: CsvRow) {
-      const cfg = overrideConfig ?? lookupConfig(row.product_type ?? '');
+      const cfg = resolveConfig(row.product_type ?? '');
       if (!cfg) {
         setResults((prev) =>
           prev.map((r) =>
             r.id === row['_id']
-              ? { ...r, stage: 'error', error: `No config found for product type: ${row.product_type || '(empty)'}` }
+              ? { ...r, stage: 'error', error: `No ${site.label} config found for product type: ${row.product_type || '(empty)'}` }
               : r,
           ),
         );
         return;
       }
 
-      const path = rowToOutputPath(row, cfg.outputDir);
+      const path = resolveOutputPath(row, cfg);
+      if (!path) {
+        setResults((prev) => prev.map((r) => (
+          r.id === row['_id']
+            ? { ...r, stage: 'error', error: `Output path must remain inside ${site.daRoot}` }
+            : r
+        )));
+        return;
+      }
       setResults((prev) =>
         prev.map((r) => (r.id === row['_id'] ? { ...r, path, stage: 'generating' } : r)),
       );
@@ -298,18 +319,26 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
   async function handleGenerateRow(rowId: string) {
     const row = rows.find((r) => r['_id'] === rowId);
     if (!row) return;
-    const cfg = overrideConfig ?? lookupConfig(row.product_type ?? '');
+    const cfg = resolveConfig(row.product_type ?? '');
     if (!cfg) {
       setResults((prev) =>
         prev.map((r) =>
           r.id === rowId
-            ? { ...r, stage: 'error', error: `No config found for product type: ${row.product_type || '(empty)'}` }
+            ? { ...r, stage: 'error', error: `No ${site.label} config found for product type: ${row.product_type || '(empty)'}` }
             : r,
         ),
       );
       return;
     }
-    const path = rowToOutputPath(row, cfg.outputDir);
+    const path = resolveOutputPath(row, cfg);
+    if (!path) {
+      setResults((prev) => prev.map((r) => (
+        r.id === rowId
+          ? { ...r, stage: 'error', error: `Output path must remain inside ${site.daRoot}` }
+          : r
+      )));
+      return;
+    }
     setResults((prev) => prev.map((r) => r.id === rowId ? { ...r, path, stage: 'generating' } : r));
     try {
       const templateHtml = await cat(cfg.templatePath);
@@ -449,7 +478,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
             onClick={handlePublish}
             className="px-5 py-2.5 bg-green-600 text-white text-sm font-medium rounded-xl hover:bg-green-700 cursor-pointer transition-colors"
           >
-            Publish {counts.publishable} document{counts.publishable !== 1 ? 's' : ''}
+            Publish to AEM Live ({counts.publishable})
           </button>
         )}
 
@@ -483,7 +512,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
             onClick={handleUnpublish}
             className="px-5 py-2.5 bg-red-600 text-white text-sm font-medium rounded-xl hover:bg-red-700 cursor-pointer transition-colors"
           >
-            Unpublish {counts.published} documents
+            Remove {counts.published} from AEM Live
           </button>
         )}
 
@@ -535,7 +564,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
                   { kind: 'document', label: 'Document links' },
                   { kind: 'preview', label: 'Preview links (.aem.page)' },
                   { kind: 'live', label: 'Published (.aem.live)' },
-                  { kind: 'prod', label: 'Published (adobe.com)' },
+                  { kind: 'prod', label: 'Production hostname' },
                 ];
                 return (
                   <div className="absolute right-0 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden">
@@ -600,7 +629,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
                   <th className="px-3 py-2 text-left font-medium text-gray-600 w-28">Issues</th>
                   <th className="px-3 py-2 text-left font-medium text-gray-600 w-28">Generate</th>
                   <th className="px-3 py-2 text-left font-medium text-gray-600 w-44">Preview</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-52">Publish</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-52">AEM Live</th>
                 </tr>
               </thead>
               <tbody>

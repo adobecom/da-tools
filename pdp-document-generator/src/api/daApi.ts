@@ -1,5 +1,6 @@
 import { runBatch, DEFAULT_CONCURRENCY, sleep } from '../lib/concurrency';
 import { fetchWithRetry } from '../lib/http';
+import { findSite } from '../sites';
 
 const DA_API = 'https://admin.da.live';
 const HLX_ADMIN = 'https://admin.hlx.page';
@@ -23,13 +24,8 @@ export function daPathToLiveUrl(daPath: string): string {
 
 export function daPathToProdUrl(daPath: string): string {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  // Production host binding is specific to this EDS site (adobe.com/express);
-  // the live origin serves www.adobe.com with the content path preserved 1:1.
-  if (org === 'adobecom' && repo === 'da-express-milo') {
-    return `https://www.adobe.com${contentPath}`;
-  }
-  // Unknown org/repo → no known prod binding; fall back to the live origin URL.
-  return daPathToLiveUrl(daPath);
+  const site = findSite(org, repo);
+  return site ? `${site.productionOrigin}${contentPath}` : daPathToLiveUrl(daPath);
 }
 
 let token: string | null = null;
